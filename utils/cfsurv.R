@@ -1,3 +1,6 @@
+### added field mdl0 to the function and changed res variable to mdl0.
+### changed the default value of ref_length from 100 to 30.
+
 #' Predictive confidence interval for survival data
 #'
 #' The main function to generate a predictive conformal confidence interval for a unit's survival time.
@@ -46,7 +49,8 @@ cfsurv <- function(x,c_list=NULL,
                    dist= "weibull",
                    I_fit = NULL,
                    ftol=.1,tol=.1,
-                   n.tree=100
+                   n.tree=100,
+                   mdl0
                    ){
   ## Check if the required packages are installed
   ## Solution found from https://stackoverflow.com/questions/4090169/elegant-way-to-check-for-missing-packages-and-install-them
@@ -132,8 +136,7 @@ cfsurv <- function(x,c_list=NULL,
   if(length(c_list)==1){
     c <- c_list
     if(is.null(pr_list) | is.null(pr_new_list)){
-      res <- censoring_prob(data_fit,data_calib,newdata,
-                            method="gpr",xnames,c,ftol,tol)
+      res <- mdl0
       pr_calib <- res$pr_calib
       pr_new <- res$pr_new
     }else{
@@ -150,8 +153,7 @@ cfsurv <- function(x,c_list=NULL,
                          alpha,c_ref=c_list,
                          type=type,dist=dist)
       c <- res$c_opt
-      res <- censoring_prob(data_fit,data_calib,newdata,
-                            method="gpr",xnames,c,ftol,tol)
+      res <- mdl0
       pr_calib <- res$pr_calib
       pr_new <- res$pr_new
     }else{

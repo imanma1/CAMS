@@ -1,117 +1,35 @@
-simu <- function(seed, setting, n, p, 
-                 n_train, n_calib, n_test, 
-                 beta, xmin, xmax, 
-                 exp_rate, alpha, mod_list){
-  
-  
+simu <- function(seed, setting, n, p,
+                 n_train, n_calib, n_test,
+                 beta, xmin, xmax,
+                 exp_rate, alpha){
+  mod <- "cox"
 
   ## Initialization
   set.seed(seed)
-  xnames <- paste0("X",1:p) 
+  xnames <- paste0("X", 1:p)
 
   ## Generate data according to the setting
   data_obj <- model_generating_fun(n_train, n_calib, n_test,
-                                   setting, beta, xnames, 
-                                   xmin, xmax, exp_rate) 
+                                   setting, beta, xnames,
+                                   xmin, xmax, exp_rate)
+  p <- p + 1 # account for the added bernoulli variable
+  xnames <- paste0("X", 1:p)
+  xnames_sub <- paste0("X", 2:p) # Feature names without X1 for subgroup training
+
   data_fit <- data_obj$data_fit
   data_calib <- data_obj$data_calib
   data_test <- data_obj$data_test
   data <- data_obj$data
   T_test <- data_obj$T_test
   
-  ## Arguments to be passed to the subsequent functions
-  x=data_test[,names(data_test) %in% xnames]
-  Xtrain = data[,names(data) %in% xnames]
-  C = data$C
-  event = data$event
-  time=data$censored_T
-  fit = data_fit
-  fit$C = -fit$C
-  alpha_list = alpha
-
-  ## Obtaining lower bounds
-  simures = NULL
-  simulen = NULL
-  for(mod in mod_list){
-    cat("Compute the result of qt...\n")
-    cat("Compute the result of qct...\n")
-    start_time = proc.time()[3]
-    mdl0 = GauPro(X = as.matrix(fit[,names(fit) %in% xnames]),
-                  Z = fit$C, D = p,
-                  type = "Gauss")
-    lb_res = cfsurv_c(x=x,
-                      Xtrain = Xtrain,
-                      C = C,
-                      event = event,
-                      time=time,
-                      alpha=alpha,
-                      mdl0=mdl0)
-    end_time <- proc.time()[3]
-    time_q <- end_time - start_time
-    
-    cat("Compute the result of qc0...\n")
-    start_time <- proc.time()[3]
-    res0 = cfsurv(x,c_list=NULL,
-                  pr_list=NULL,
-                  pr_new_list=NULL,
-                  Xtrain,C,event,time,
-                  alpha=alpha,
-                  type="quantile",
-                  model = mod,
-                  dist= "weibull",
-                  I_fit = NULL,
-                  ftol=.1,tol=.1,
-                  n.tree=100)
-    end_time <- proc.time()[3]
-    time_qc0 <- end_time - start_time
-    
-    cov_rt = function(lb_res,T_test){sum(T_test >= lb_res)/length(lb_res)}
-    
-    res1 = lb_res$lower_bnd_qtl
-    res2 = lb_res$lower_bnd_qctl
-    time_qt = lb_res$time_qt
-    time_qct = lb_res$time_qct
-    time_q_base = time_q - (time_qt+time_qct)
-    time_qt = time_qt + time_q_base
-    time_qct = time_qct + time_q_base
-    
-    time <- c(time_qt)
-    time <- c(time, time_qct)
-    time <- c(time, time_qc0)
-    output <- data.frame(qtl = res1)
-    output$qctl <- res2
-    output$qc0 <- res0$res
-    
-    # parametric methods
-    ########################################
-    ## vanilla CQR
-    ########################################
-    cat(" - Computing the result of vanilla-CQR...\n")
-    start_time <- proc.time()[3]
-    res <- lapply(alpha_list,
-                  cqr,
-                  x=data_test[,names(data_test) %in% xnames],
-                  Xtrain = data[,names(data) %in% xnames],
-                  Ytrain = data$censored_T,
-                  I_fit = 1:n_train,
-                  seed = seed +7)
-    res <- do.call(rbind,lapply(res,as.data.frame))
-    output$cqr.bnd <- res[,1]
-    end_time <- proc.time()[3]
-    time <- c(time, end_time - start_time)
-    cat("done.\n")
-    
-    
-    ########################################
-    ### utility functinos
-    ########################################
-    ## A function to get result
-    extract_res_univariate <- function(x){
-      res <- mdl_coef[1] + mdl_coef[-1]*x
-      return(res)
-    }
-    
-    ## A utility function to extract quantiles from a coxph object
+  alpha_list <- alpha
+  
+  ########################################
+  ## Core Pipeline Helper Function
+  ########################################
+  # This function trains all 6 methods and returns their lower bounds and times
+  run_pipeline <- function(sub_fit, sub_calib, sub_test, sub_data, xnames_to_use, alpha_list, seed, mod) {
+    # Utility function to safely extract quantiles from a coxph object
     extract_quant <- function(mdl, x, alpha){
       res <- summary(survfit(mdl, newdata = x))
       time_point <- res$time
@@ -121,71 +39,166 @@ simu <- function(seed, setting, n, p,
       }else{
         quant <- time_point[min(which(survcdf >= alpha))]
       }
-      # quant <- time_point[min(which(survcdf >= alpha))]
       return(quant)
     }
     
-    ########################################
-    ## Quantile regression
-    ########################################
-    ## Cox
-    cat("Compute the result of Cox...\n")
+    n_train_sub <- nrow(sub_fit)
+    p_sub <- length(xnames_to_use)
+    
+    x <- sub_test[, xnames_to_use, drop=FALSE]
+    Xtrain <- sub_data[, xnames_to_use, drop=FALSE]
+    C <- sub_data$C
+    event <- sub_data$event
+    time <- sub_data$censored_T
+    
+    fit <- sub_fit
+    fit$C <- -fit$C
+    
+    # 1. Estimate mdl0
     start_time <- proc.time()[3]
-    fmla <- as.formula(paste("Surv(censored_T, event) ~ ",
-                             paste(xnames, collapse= "+")))
-    mdl <- coxph(fmla, data = data)
-    res <- c()
-    for(alpha in alpha_list){
-      res <- c(res, apply(data_test, 1, extract_quant, mdl = mdl,  alpha = alpha))
+    mdl0 <- GauPro(X = as.matrix(fit[, xnames_to_use, drop=FALSE]), Z = fit$C, D = p_sub, type = "Gauss")
+    time_mdl0 <- proc.time()[3] - start_time
+    
+    # 2. cfsurv_c (qt and qct)
+    start_time <- proc.time()[3]
+    lb_res <- cfsurv_c(x=x, Xtrain=Xtrain, C=C, event=event, time=time, alpha=alpha_list, mdl0=mdl0)
+    time_q <- proc.time()[3] - start_time
+    
+    res1 <- lb_res$lower_bnd_qtl
+    res2 <- lb_res$lower_bnd_qctl
+    time_qt <- lb_res$time_qt
+    time_qct <- lb_res$time_qct
+    time_q_base <- time_q - (time_qt + time_qct)
+    time_qt <- time_qt + time_q_base + time_mdl0
+    time_qct <- time_qct + time_q_base + time_mdl0
+    
+    times <- c(time_qt, time_qct)
+    output <- data.frame(qtl = res1, qctl = res2)
+    
+    # 3. cfsurv (qc0)
+    start_time <- proc.time()[3]
+    res0 <- cfsurv(x, c_list=NULL, pr_list=NULL, pr_new_list=NULL,
+                   Xtrain, C, event, time, alpha=alpha_list, type="quantile",
+                   model=mod, dist="weibull", I_fit=NULL, ftol=.1, tol=.1,
+                   n.tree=100, mdl0=mdl0)
+    time_qc0 <- proc.time()[3] - start_time + time_mdl0
+    times <- c(times, time_qc0)
+    output$qc0 <- res0$res
+    
+    # 4. vanilla CQR
+    start_time <- proc.time()[3]
+    res <- lapply(alpha_list, cqr,
+                  x = x,
+                  Xtrain = Xtrain,
+                  Ytrain = sub_data$censored_T,
+                  I_fit = 1:n_train_sub,
+                  seed = seed + 7)
+    res <- do.call(rbind, lapply(res, as.data.frame))
+    output$cqr.bnd <- res[, 1]
+    times <- c(times, proc.time()[3] - start_time)
+    
+    # 5. Cox Model
+    start_time <- proc.time()[3]
+    fmla <- as.formula(paste("Surv(censored_T, event) ~", paste(xnames_to_use, collapse="+")))
+    mdl <- coxph(fmla, data = sub_data)
+    cox_res <- c()
+    for (i in 1:nrow(sub_test)) {
+       cox_res <- c(cox_res, extract_quant(mdl, sub_test[i, , drop=FALSE], alpha_list))
     }
-    output$cox.bnd <- res
-    end_time <- proc.time()[3]
-    time <- c(time, end_time - start_time)
-    cat("Done.\n")
+    output$cox.bnd <- cox_res
+    times <- c(times, proc.time()[3] - start_time)
     
-    
-    ## random forest
-    cat("Compute the result of random forest...")
+    # 6. Random Forest
     start_time <- proc.time()[3]
     ntree <- 1000
     nodesize <- 80
-    res <- c()
-    fmla <- as.formula(paste("censored_T ~ ",
-                             paste(xnames, collapse= "+")))
-    for(alpha in alpha_list){
-      if(p==1){
-        mdl <- crf.km(as.formula("censorerd_T~X1"),
-                      ntree = ntree, 
-                      nodesize = nodesize,
-                      data_train = data[,colnames(data) %in% c("X1","censored_T","event")], 
-                      data_test = data.frame(X1 = data_test$X1), 
-                      yname = 'censored_T', 
-                      iname = 'event',
-                      tau = alpha,
-                      method = "grf")
-      }else{
-        mdl <- crf.km(fmla,
-                      ntree = ntree, 
-                      nodesize = nodesize,
-                      data_train = data[,colnames(data) %in% c(xnames,"censored_T","event")], 
-                      data_test = data_test[,colnames(data_test) %in% xnames], 
-                      yname = 'censored_T', 
-                      iname = 'event',
-                      tau = alpha,
-                      method = "grf")
-      }
-      res <- c(res,mdl$predicted)
-    }
-    output$rf.bnd  <- res
-    end_time <- proc.time()[3]
-    time <- c(time, end_time - start_time)
-    cat("Done.\n")
+    fmla_rf <- as.formula(paste("censored_T ~", paste(xnames_to_use, collapse="+")))
+    mdl <- crf.km(fmla_rf, ntree = ntree, nodesize = nodesize,
+                  data_train = sub_data[, c(xnames_to_use, "censored_T", "event"), drop=FALSE], 
+                  data_test = sub_test[, xnames_to_use, drop=FALSE], 
+                  yname = 'censored_T', iname = 'event', tau = alpha_list, method = "grf")
+    output$rf.bnd <- mdl$predicted
+    times <- c(times, proc.time()[3] - start_time)
     
-    simures = apply(output, 2, cov_rt, T_test=T_test)
-    simulen = apply(output, 2, mean)
+    return(list(output = output, times = times))
   }
-  simu_out = c(simures,simulen,time)
-  return(simu_out=simu_out)
+  
+  ########################################
+  ## Track Subgroup Indices
+  ########################################
+  idx_test_0 <- data_test$X1 == 0
+  idx_test_1 <- data_test$X1 == 1
+
+  ########################################
+  ## APPROACH 1: Joint Modeling
+  ########################################
+  cat("========== Executing Approach 1: Joint Modeling ==========\n")
+  res_joint <- run_pipeline(data_fit, data_calib, data_test, data, 
+                            xnames, alpha_list, seed, mod)
+
+  ########################################
+  ## APPROACH 2: Subgroup Modeling
+  ########################################
+  cat("========== Executing Approach 2: Subgroup X1 = 0 ==========\n")
+  res_0 <- run_pipeline(data_fit[data_fit$X1 == 0, , drop=FALSE],
+                        data_calib[data_calib$X1 == 0, , drop=FALSE],
+                        data_test[data_test$X1 == 0, , drop=FALSE],
+                        data[data$X1 == 0, , drop=FALSE],
+                        xnames_sub, alpha_list, seed, mod)
+                                 
+  cat("========== Executing Approach 2: Subgroup X1 = 1 ==========\n")
+  res_1 <- run_pipeline(data_fit[data_fit$X1 == 1, , drop=FALSE],
+                        data_calib[data_calib$X1 == 1, , drop=FALSE],
+                        data_test[data_test$X1 == 1, , drop=FALSE],
+                        data[data$X1 == 1, , drop=FALSE],
+                        xnames_sub, alpha_list, seed, mod)
+  
+  # Merge subgroup outputs to map exactly to the data_test row order
+  output_subgroup <- data.frame(matrix(ncol = ncol(res_0$output), nrow = nrow(data_test)))
+  colnames(output_subgroup) <- colnames(res_0$output)
+  output_subgroup[idx_test_0, ] <- res_0$output
+  output_subgroup[idx_test_1, ] <- res_1$output
+  times_subgroup <- res_0$times + res_1$times
+
+  ########################################
+  ## Format Output Helper
+  ########################################
+  compute_metrics <- function(output_df, times_vec, suffix_label) {
+    # Coverage logic
+    cov_marg <- apply(output_df, 2, function(x) sum(T_test >= x) / length(x))
+    cov_grp0 <- apply(output_df, 2, function(x) sum(T_test[idx_test_0] >= x[idx_test_0]) / sum(idx_test_0))
+    cov_grp1 <- apply(output_df, 2, function(x) sum(T_test[idx_test_1] >= x[idx_test_1]) / sum(idx_test_1))
+    
+    # Mean logic
+    simulen      <- apply(output_df, 2, mean)
+    simulen_grp0 <- apply(output_df, 2, function(x) mean(x[idx_test_0]))
+    simulen_grp1 <- apply(output_df, 2, function(x) mean(x[idx_test_1]))
+    
+    method_names <- paste(c("DFT-adaptive-T", "DFT-adaptive-CT", "DFT-fixed", 
+                            "Vanilla CQR", "Cox", "Random Forest"), suffix_label)
+    
+    data.frame(
+      "method"                       = method_names,
+      "setting"                      = setting,
+      "group coverage for x_1 = 0"   = cov_grp0,
+      "group coverage for x_1 = 1"   = cov_grp1,
+      "Marginal coverage"            = cov_marg,
+      "lower bound mean for x_1 = 0" = simulen_grp0,
+      "lower bound mean for x_1 = 1" = simulen_grp1,
+      "lower bound values mean"      = simulen,
+      "computation time"             = times_vec,
+      check.names = FALSE
+    )
+  }
+  
+  ########################################
+  ## Compute & Bind Final Results
+  ########################################
+  df_joint <- compute_metrics(res_joint$output, res_joint$times, "(Joint)")
+  df_subgroup <- compute_metrics(output_subgroup, times_subgroup, "(Subgroup)")
+  
+  simu_out <- rbind(df_joint, df_subgroup)
+  rownames(simu_out) <- NULL
+  
+  return(simu_out)
 }
-
-
