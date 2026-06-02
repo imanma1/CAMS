@@ -55,11 +55,13 @@ simu <- function(seed, setting, n, p,
     fit$C <- -fit$C
     
     # 1. Estimate mdl0
+    cat("Training mdl0...\n")
     start_time <- proc.time()[3]
     mdl0 <- GauPro(X = as.matrix(fit[, xnames_to_use, drop=FALSE]), Z = fit$C, D = p_sub, type = "Gauss")
     time_mdl0 <- proc.time()[3] - start_time
     
     # 2. cfsurv_c (qt and qct)
+    cat("Training cfsurv_c...\n")
     start_time <- proc.time()[3]
     lb_res <- cfsurv_c(x=x, Xtrain=Xtrain, C=C, event=event, time=time, alpha=alpha_list, mdl0=mdl0)
     time_q <- proc.time()[3] - start_time
@@ -76,16 +78,33 @@ simu <- function(seed, setting, n, p,
     output <- data.frame(qtl = res1, qctl = res2)
     
     # 3. cfsurv (qc0)
+    cat("Training cfsurv (qc0)...\n")
     start_time <- proc.time()[3]
-    res0 <- cfsurv(x, c_list=NULL, pr_list=NULL, pr_new_list=NULL,
-                   Xtrain, C, event, time, alpha=alpha_list, type="quantile",
-                   model=mod, dist="weibull", I_fit=NULL, ftol=.1, tol=.1,
-                   n.tree=100, mdl0=mdl0)
+
+    res0 <- cfsurv(x = x, 
+                   c_list = NULL, 
+                   pr_list = NULL, 
+                   pr_new_list = NULL,
+                   Xtrain = Xtrain,
+                   C = C,
+                   event = event,
+                   time = time,
+                   alpha = alpha_list, 
+                   type = "quantile",
+                   model = mod, 
+                   dist = "weibull", 
+                   I_fit = NULL, 
+                   ftol = 0.1, 
+                   tol = 0.1,
+                   n.tree = 100, 
+                   mdl0 = mdl0)
+
     time_qc0 <- proc.time()[3] - start_time + time_mdl0
     times <- c(times, time_qc0)
     output$qc0 <- res0$res
     
     # 4. vanilla CQR
+    cat("Training vanilla CQR...\n")
     start_time <- proc.time()[3]
     res <- lapply(alpha_list, cqr,
                   x = x,
@@ -98,6 +117,7 @@ simu <- function(seed, setting, n, p,
     times <- c(times, proc.time()[3] - start_time)
     
     # 5. Cox Model
+    cat("Training Cox Model...\n")
     start_time <- proc.time()[3]
     fmla <- as.formula(paste("Surv(censored_T, event) ~", paste(xnames_to_use, collapse="+")))
     mdl <- coxph(fmla, data = sub_data)
@@ -109,6 +129,7 @@ simu <- function(seed, setting, n, p,
     times <- c(times, proc.time()[3] - start_time)
     
     # 6. Random Forest
+    cat("Training Random Forest...\n")
     start_time <- proc.time()[3]
     ntree <- 1000
     nodesize <- 80

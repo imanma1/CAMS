@@ -31,8 +31,8 @@ setting_list = c("ld_setting1",
                  "hd_heterosc")
 
 alpha <- .1    # target level 1-alpha
-n <- 1200
-n_test <- 6000
+n <- 2000
+n_test <- 10000
 n_train <- n
 n_calib <- n
 xmin <- 0 
@@ -47,9 +47,9 @@ num_runs <- 5
 ### SETUP PARALLEL CLUSTER
 ########################################
 # Use all available cores minus 1 to keep your computer responsive
-num_cores <- detectCores() - 1
+slurm_cores <- as.numeric(Sys.getenv("SLURM_CPUS_PER_TASK"))
+num_cores <- ifelse(is.na(slurm_cores), detectCores() - 1, slurm_cores)
 cl <- makeCluster(num_cores)
-registerDoParallel(cl)
 
 cat(sprintf("Starting parallel simulation across %d cores...\n", num_cores))
 
@@ -58,7 +58,7 @@ cat(sprintf("Starting parallel simulation across %d cores...\n", num_cores))
 ########################################
 # Replace the standard 'for' loop with 'foreach %dopar%'
 foreach(i = 1:num_runs,
-        .packages = c("tidyverse", "survival", "quantreg", "GauPro", "gbm", "grf")) %dopar% {
+        .packages = c("tidyverse", "survival", "quantreg", "GauPro", "gbm", "grf")) %do% {
   
   # IMPORTANT: Source the custom scripts inside the loop so each parallel worker loads them
   source("./source_code.R")
