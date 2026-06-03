@@ -50,6 +50,7 @@ num_runs <- 5
 slurm_cores <- as.numeric(Sys.getenv("SLURM_CPUS_PER_TASK"))
 num_cores <- ifelse(is.na(slurm_cores), detectCores() - 1, slurm_cores)
 cl <- makeCluster(num_cores)
+registerDoParallel(cl) 
 
 cat(sprintf("Starting parallel simulation across %d cores...\n", num_cores))
 
@@ -58,7 +59,7 @@ cat(sprintf("Starting parallel simulation across %d cores...\n", num_cores))
 ########################################
 # Replace the standard 'for' loop with 'foreach %dopar%'
 foreach(i = 1:num_runs,
-        .packages = c("tidyverse", "survival", "quantreg", "GauPro", "gbm", "grf")) %do% {
+        .packages = c("tidyverse", "survival", "quantreg", "GauPro", "gbm", "grf")) %dopar% {
   
   # IMPORTANT: Source the custom scripts inside the loop so each parallel worker loads them
   source("./source_code.R")
@@ -66,7 +67,7 @@ foreach(i = 1:num_runs,
   source("./simu.R")
   
   # Update the seed for each run
-  current_seed <- i 
+  current_seed <- i
   
   # Create a separate folder named with the run number inside the 'results' folder
   run_folder <- sprintf("../results/%d", current_seed)
