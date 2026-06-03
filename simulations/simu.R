@@ -53,12 +53,18 @@ simu <- function(seed, setting, n, p,
     
     fit <- sub_fit
     fit$C <- -fit$C
-    
+
+    slurm_cores <- as.numeric(Sys.getenv("SLURM_CPUS_PER_TASK"))
+    n_threads <- ifelse(is.na(slurm_cores), parallel::detectCores(), slurm_cores)
+
     # 1. Estimate mdl0
-    cat("Training mdl0...\n")
     start_time <- proc.time()[3]
-    mdl0 <- GauPro(X = as.matrix(fit[, xnames_to_use, drop=FALSE]), Z = fit$C, D = p_sub, type = "Gauss")
+    # Train the Gaussian Process in parallel using the modern gpkm() wrapper
+    mdl0 <- GauPro::gpkm(X = as.matrix(fit[, xnames_to_use, drop=FALSE]), 
+                       Z = fit$C,
+                       parallel = TRUE)
     time_mdl0 <- proc.time()[3] - start_time
+    cat(sprintf("mdl0 trained in %.2f seconds.\n", time_mdl0))
     
     # 2. cfsurv_c (qt and qct)
     cat("Training cfsurv_c...\n")

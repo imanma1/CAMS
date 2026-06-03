@@ -22,15 +22,21 @@ cox_based <- function(x,alpha,
   newdata <- data.frame(x)
   colnames(newdata) <- xnames
   fmla <- as.formula(paste("Surv(censored_T, event) ~ ", paste(xnames, collapse= "+")))
+  start_time <- proc.time()[3]
   mdl <- survreg(fmla, data = data_fit, dist= "weibull")
+  servregtime <- proc.time()[3] - start_time
+  cat(sprintf("servreg in %.2f seconds.\n", servregtime))
 
   ## The fitted quantile for the calibration data
   xdf <- data.frame(data_calib[,names(data_calib) %in% xnames])
   colnames(xdf) = colnames(newdata)
+  start_time <- proc.time()[3]
   res <- predict(mdl,
                  newdata = xdf,
                  type = "quantile",
                  p = alpha)
+  time_pred <- proc.time()[3] - start_time
+  cat(sprintf("predict in %.2f seconds.\n", time_pred))
   quant <-  res  
   score <- quant-data_calib$censored_T
   
@@ -52,7 +58,11 @@ cox_based <- function(x,alpha,
   start_time = proc.time()[3]
   ## Fit the model for C with quantile_forest (now only supports 1d)
   fit_X <- data.frame(X = data_fit[,names(data_fit) %in% xnames])
+  start_time0 <- proc.time()[3]
   qc_mdl <- quantile_forest(fit_X, as.vector(data_fit$C))
+  time_qc_mdl <- proc.time()[3] - start_time0
+  cat(sprintf("quantile_forest in %.2f seconds.\n",
+              time_qc_mdl))
   
   qct_res <- alpha_qct(mdl, qc_mdl, newdata,
                      data_fit, data_calib,

@@ -127,6 +127,7 @@ cfsurv <- function(x,c_list=NULL,
   newdata <- data.frame(x)
   colnames(newdata) <- xnames
   
+  start_time <- proc.time()[3]
   ## If c is not specified, select c automatically 
   if(is.null(c_list)){
     ref_length <- 100
@@ -136,7 +137,7 @@ cfsurv <- function(x,c_list=NULL,
   if(length(c_list)==1){
     c <- c_list
     if(is.null(pr_list) | is.null(pr_new_list)){
-      res <- mdl0
+      res <- cox_censoring_prob(mdl0, data_calib, newdata, xnames, c, ftol, tol)
       pr_calib <- res$pr_calib
       pr_new <- res$pr_new
     }else{
@@ -151,9 +152,9 @@ cfsurv <- function(x,c_list=NULL,
                          time=data_fit$censored_T,
                          weight_ref=NULL,
                          alpha,c_ref=c_list,
-                         type=type,dist=dist)
+                         type=type,dist=dist, mdl0=mdl0) # <--- PASS mdl0
       c <- res$c_opt
-      res <- mdl0
+      res <- cox_censoring_prob(mdl0, data_calib, newdata, xnames, c, ftol, tol)
       pr_calib <- res$pr_calib
       pr_new <- res$pr_new
     }else{
@@ -164,12 +165,15 @@ cfsurv <- function(x,c_list=NULL,
                          time=data_fit$censored_T,
                          alpha,c_ref=c_list,
                          weight_ref=weight_ref,
-                         type=type,dist=dist)
+                         type=type,dist=dist, mdl0=mdl0) # <--- PASS mdl0
       c <- res$c_opt
       pr_calib <- pr_list[-I_fit,c_list==c] 
       pr_new <- pr_new_list[,c_list==c]
     }
   }
+end_time <- proc.time()[3]
+cat(sprintf("selection_c for in %.2f seconds.\n", end_time - start_time))
+
   ## Computing the weight for the calibration data and the test data
   weight_calib <- 1/pr_calib
   weight_new <- 1/pr_new
@@ -202,6 +206,7 @@ cfsurv <- function(x,c_list=NULL,
    }
   
   if(model == "cox"){
+    start_time <- proc.time()[3]
     res = cox0_based(x,c,alpha,
                     data_fit,
                     data_calib,
@@ -211,6 +216,8 @@ cfsurv <- function(x,c_list=NULL,
                     weight_new,
                     ftol,
                     tol)
+    end_time <- proc.time()[3]
+    cat(sprintf("cox0_based for in %.2f seconds.\n", end_time - start_time))
    }
   
   if(model == "randomforest"){
@@ -245,6 +252,29 @@ cfsurv <- function(x,c_list=NULL,
   return(list(res=res,
               c=c))
 
-
 }
 
+cox_censoring_prob <- function(gpr_mdl, calib, test=NULL,
+                      xnames, c,
+                      ftol=.1, tol=.1){
+    p <- length(xnames)
+
+    ## Computing the censoring scores for the calibration data
+    mean_calib <- gpr_mdl$predict(as.matrix(calib[,names(calib) %in% xnames]))
+    sd_calib <- gpr_mdl$predict(as.matrix(calib[,names(calib) %in% xnames]),
+                              se.fit = TRUE)$se
+
+    pr_calib <- pnorm((-c - mean_calib) / sd_calib)
+
+    ## Computing the censoring scores for the test data
+    if(!is.null(test)){
+      newdata <- data.frame(test)
+      colnames(newdata) <- xnames
+      mean_new <- gpr_mdl$predict(as.matrix(newdata[,names(newdata) %in% xnames]))
+      sd_new <- gpr_mdl$predict(as.matrix(newdata[,names(newdata) %in% xnames]),
+                              se.fit = TRUE)$se
+
+      pr_new <- pnorm((-c - mean_new) / sd_new)
+
+    }else{pr_new=NULL}
+  return(list(pr_calib = pr_calib, pr_new = pr_new))}

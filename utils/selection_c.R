@@ -8,7 +8,8 @@ selection_c <- function(X,C,event,time,alpha,
                         c_ref,weight_ref,
                         model="cox",
                         type="quantile",
-                        dist="weibull"){
+                        dist="weibull",
+                        mdl0=NULL){ 
   
   ## Get the dimension of the input
   if(is.null(dim(X))){
@@ -23,28 +24,40 @@ selection_c <- function(X,C,event,time,alpha,
   data <- data.frame(data)
   colnames(data) <- c(xnames,"C","event","censored_T")
 
-  ## Evaluate the average bound for each candidate c
-  bnd_ref <- c()
-  for(i in 1:length(c_ref)){
-  bnd <- evaluate_length(c_ref[i],alpha=alpha,n=n,p=p,model,
-                        data=data,weight=weight_ref[,i],xnames=xnames,
-                        type=type,dist=dist)
-  bnd_ref <- c(bnd_ref,bnd)
+  # === OPTIMIZATION: PARALLELIZE GRID SEARCH ===
+  library(parallel)
+  if (.Platform$OS.type == "windows") {
+    n_threads <- 1  
+  } else {
+    slurm_cores <- as.numeric(Sys.getenv("SLURM_CPUS_PER_TASK"))
+    n_threads <- ifelse(is.na(slurm_cores), detectCores(), slurm_cores)
   }
-  c_opt <- c_ref[which.max(bnd_ref)]
-  return(list(c_opt=c_opt,c_ref=c_ref,bnd_ref=bnd_ref))
 
+  ## Evaluate the average bound for each candidate c simultaneously
+  bnd_ref <- unlist(mclapply(1:length(c_ref), function(i) {
+    
+    # Safely handle the weight_ref subsetting
+    current_weight <- if(is.null(weight_ref)) NULL else weight_ref[,i]
+    
+    # Calculate and return the bound for this specific threshold
+    evaluate_length(c_ref[i], alpha=alpha, n=n, p=p, model=model,
+                    data=data, weight=current_weight, xnames=xnames,
+                    type=type, dist=dist, mdl0=mdl0)
+                    
+  }, mc.cores = n_threads))
+
+  # Find the optimal cut-off based on the max bound
+  c_opt <- c_ref[which.max(bnd_ref)]
+  return(list(c_opt=c_opt, c_ref=c_ref, bnd_ref=bnd_ref))
 }
 
 evaluate_length <- function(c,alpha,n,p,
-                            model,
-                            data,
-                            weight,
-                            xnames,
+                            model, data, weight, xnames,
                             type = "quantile",
                             dist = "weibull",
-                            seed = 2020){
-  ## Determine the fitting set, the calibration set and the test set
+                            seed = 2020,
+                            mdl0 = NULL){ # <--- ADD mdl0
+  
   set.seed(seed)
   I_fit <- sample(1:n,floor(n/2),replace=FALSE)
   I_calib <- sample((1:n)[-I_fit],floor(n/4),replace=FALSE)
@@ -55,8 +68,10 @@ evaluate_length <- function(c,alpha,n,p,
   data_test <- data[I_test,]
   
   if(is.null(weight)){
-    res <- censoring_prob(fit=data_fit,calib=data_calib,test=data_test,
-                          method="gpr",xnames=xnames,c)
+    # === OPTIMIZATION 3: REUSE mdl0 ===
+    # Use cens_prob (which uses pre-trained mdl0) instead of censoring_prob (which trains from scratch)
+    res <- cens_prob(mdl=mdl0, calib=data_calib, test=data_test,
+                     method="gpr", xnames=xnames, c=c)
     pr_calib <- res$pr_calib
     pr_new <- res$pr_new
     weight_calib <- 1/pr_calib
@@ -65,7 +80,7 @@ evaluate_length <- function(c,alpha,n,p,
     weight_calib <- weight[I_calib]
     weight_new <- weight[I_test]
   }
-  x <- data_test[,colnames(data_test)%in%xnames]
+  x <- data_test[,colnames(data_test)%in%xnames, drop=FALSE]
   
   if(model == "cox"){
     bnd <- cox0_based(x,c,alpha,
