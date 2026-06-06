@@ -55,8 +55,16 @@ alpha_qt <- function(mdl, newdata, data_fit, data_calib, xnames, alpha, len_x, m
   }
   
   # === OPTIMIZATION 2: VECTORIZE PREDICTION ===
-  # Replaces the row-by-row 10,000 iteration for-loop
-  lower_bnd_l <- as.numeric(lv_qt(mdl, newdata, v_hat_l, alpha, cens_rt))
+  if (is.null(v_hat_l)) {
+    lower_bnd_l <- rep(0, len_x)
+  } else {
+    lower_bnd_l <- as.numeric(lv_qt(mdl, newdata, v_hat_l, alpha, cens_rt))
+    
+    # Safety net: If the function somehow still returns a scalar, expand it
+    if (length(lower_bnd_l) == 1) {
+      lower_bnd_l <- rep(lower_bnd_l, len_x)
+    }
+  }
   lower_bnd_g <- rep(0, len_x)
   
   return(list(lower_bnd_l = lower_bnd_l, lower_bnd_g = lower_bnd_g))
@@ -117,7 +125,16 @@ alpha_qct <- function(mdl, qc_mdl, newdata, data_fit, data_calib, xnames, alpha,
   }
   
   # === OPTIMIZATION 2: VECTORIZE PREDICTION ===
-  lower_bnd_l <- as.numeric(lv_qct(mdl, qc_mdl, newdata, v_hat_l, alpha, cens_rt))
+  if (is.null(v_hat_l)) {
+    lower_bnd_l <- rep(0, len_x)
+  } else {
+    lower_bnd_l <- as.numeric(lv_qct(mdl, qc_mdl, newdata, v_hat_l, alpha, cens_rt))
+    
+    # Safety net: If the function somehow still returns a scalar, expand it
+    if (length(lower_bnd_l) == 1) {
+      lower_bnd_l <- rep(lower_bnd_l, len_x)
+    }
+  }
   lower_bnd_g <- rep(0, len_x)
 
   return(list(lower_bnd_l = lower_bnd_l, lower_bnd_g = lower_bnd_g))

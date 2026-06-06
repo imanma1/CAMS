@@ -28,6 +28,7 @@ source("./simu.R")
 ### run simulations
 ########################################
 ## configurations
+########################################
 setting_list = c("ld_setting1",
                  "ld_setting2",
                  "ld_setting3",
@@ -58,7 +59,7 @@ cat(sprintf("Starting sequential outer loop. Inner algorithms will utilize %d co
 for(i in 1:num_runs){
   
   # Update the seed for each run
-  current_seed <- i 
+  current_seed <- i
   
   # Create a separate folder named with the run number inside the 'results' folder
   run_folder <- sprintf("../results/%d", current_seed)

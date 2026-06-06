@@ -120,7 +120,9 @@ simu <- function(seed, setting, n, p,
                   seed = seed + 7)
     res <- do.call(rbind, lapply(res, as.data.frame))
     output$cqr.bnd <- res[, 1]
-    times <- c(times, proc.time()[3] - start_time)
+    vanilla_cqr_time <- proc.time()[3] - start_time
+    times <- c(times, vanilla_cqr_time)
+    cat(sprintf("Vanilla CQR trained in %.2f seconds.\n", vanilla_cqr_time))
     
     # 5. Cox Model
     cat("Training Cox Model...\n")
@@ -132,7 +134,9 @@ simu <- function(seed, setting, n, p,
        cox_res <- c(cox_res, extract_quant(mdl, sub_test[i, , drop=FALSE], alpha_list))
     }
     output$cox.bnd <- cox_res
-    times <- c(times, proc.time()[3] - start_time)
+    cox_time <- proc.time()[3] - start_time
+    times <- c(times, cox_time)
+    cat(sprintf("Cox Model trained in %.2f seconds.\n", cox_time))
     
     # 6. Random Forest
     cat("Training Random Forest...\n")
@@ -145,7 +149,9 @@ simu <- function(seed, setting, n, p,
                   data_test = sub_test[, xnames_to_use, drop=FALSE], 
                   yname = 'censored_T', iname = 'event', tau = alpha_list, method = "grf")
     output$rf.bnd <- mdl$predicted
-    times <- c(times, proc.time()[3] - start_time)
+    rf_time <- proc.time()[3] - start_time
+    times <- c(times, rf_time)
+    cat(sprintf("Random Forest trained in %.2f seconds.\n", rf_time))
     
     return(list(output = output, times = times))
   }
