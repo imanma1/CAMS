@@ -34,14 +34,14 @@ setting_list = c("homo_cens", "cov_cens", "prot_cens",
                  "surv_misspec", "cens_misspec", "simul_misspec")
 
 alpha <- .1    # target level 1-alpha
-n <- 500
-n_test <- 2500
+n <- 1000
+n_test <- 5000
 n_train <- n
 n_calib <- n
 xmin <- -2
 xmax <- 2
 
-num_runs <- 5
+num_runs <- 50
 
 # Detect cores just to print a helpful message (the actual multithreading happens inside the utils scripts)
 slurm_cores <- as.numeric(Sys.getenv("SLURM_CPUS_PER_TASK"))
