@@ -27,11 +27,20 @@ selection_c <- function(X,C,event,time,alpha,
   # === OPTIMIZATION: PARALLELIZE GRID SEARCH ===
   library(parallel)
   if (.Platform$OS.type == "windows") {
-    n_threads <- 1  
+    n_threads <- 1
   } else {
     slurm_cores <- as.numeric(Sys.getenv("SLURM_CPUS_PER_TASK"))
     n_threads <- ifelse(is.na(slurm_cores), detectCores(), slurm_cores)
   }
+  
+  if (.Platform$OS.type != "windows") {
+    library(RhpcBLASctl)
+    # Save the original number of threads (likely 48)
+    original_threads <- blas_get_num_procs() 
+    # Throttle down to 1 thread to protect mclapply from deadlocking
+    blas_set_num_threads(1)
+    omp_set_num_threads(1)
+  } 
 
   ## Evaluate the average bound for each candidate c simultaneously
   bnd_ref <- unlist(mclapply(1:length(c_ref), function(i) {
@@ -45,6 +54,12 @@ selection_c <- function(X,C,event,time,alpha,
                     type=type, dist=dist, mdl0=mdl0)
                     
   }, mc.cores = n_threads))
+
+  if (.Platform$OS.type != "windows") {
+    # Restore the original number of threads after parallel processing
+    blas_set_num_threads(original_threads)
+    omp_set_num_threads(original_threads)
+  }
 
   # Find the optimal cut-off based on the max bound
   c_opt <- c_ref[which.max(bnd_ref)]

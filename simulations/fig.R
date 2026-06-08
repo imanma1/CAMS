@@ -7,7 +7,7 @@ target_alpha <- 0.1          # Miscoverage target
 target_cov <- 1 - target_alpha
 
 # List of all settings used in the simulations
-setting_list <- c("ld_setting1", "ld_setting2", "ld_setting3", "ld_setting4", 
+setting_list <- c("ld_setting1", "ld_setting2", "ld_setting3", "ld_setting4",
                   "hd_homosc", "hd_heterosc")
 
 # Create the plots directory if it doesn't exist
@@ -26,7 +26,8 @@ draw_paper_boxplot <- function(data, metric_col, y_label, add_target_line = FALS
   
   boxplot(data[[metric_col]] ~ data$method,
           col = "white",
-          border = 2:7,           # Assigns different colors to the box borders
+          # Reuses the 6 standard colors for both Joint and Subgroup versions
+          border = rep(2:7, times = 2), 
           ylab = y_label,
           xlab = "",              # Leave blank, names will act as x-axis labels
           las = 2,                # Rotates x-axis text to be perpendicular
@@ -48,7 +49,7 @@ for (setting in setting_list) {
   # Reset data frame for the current setting
   all_data <- data.frame()
   
-  # Aggregate data from the 100 folders
+  # Aggregate data from the folders
   for (i in 1:num_runs) {
     file_name <- sprintf("%s_seed_%d.csv", setting, i)
     file_path <- file.path(results_dir, as.character(i), file_name)
@@ -65,43 +66,57 @@ for (setting in setting_list) {
     next
   }
   
-  # Ensure the methods plot in the correct order
-  method_order <- c("DFT-adaptive-T", "DFT-adaptive-CT", "DFT-fixed", 
-                    "Vanilla CQR", "Cox", "Random Forest")
+  # Ensure the methods plot in the correct order for the new data format
+  method_order <- c("CAMS", "DFT-adaptive-T (Joint)", "DFT-adaptive-CT (Joint)", "DFT-fixed (Joint)", 
+                    "Vanilla CQR (Joint)", "Cox (Joint)", "Random Forest (Joint)",
+                    "DFT-adaptive-T (Subgroup)", "DFT-adaptive-CT (Subgroup)", "DFT-fixed (Subgroup)", 
+                    "Vanilla CQR (Subgroup)", "Cox (Subgroup)", "Random Forest (Subgroup)")
   all_data$method <- factor(all_data$method, levels = method_order)
   
-  # 4. Generate the 4 Plots for the Current Setting
+  # 4. Generate the 6 Plots for the Current Setting
   # ---------------------------------------------------------
   pdf_name <- file.path(plots_dir, sprintf("%s_results_plots.pdf", setting))
-  pdf(pdf_name, width = 12, height = 10)
+  pdf(pdf_name, width = 15, height = 11) # Made PDF wider to comfortably fit 3 columns
   
-  # Set up a 2x2 grid for the plots, expanding bottom margin for vertical text
-  par(mfrow = c(2, 2), mar = c(9, 4, 2, 1))
+  # Set up a 2x3 grid for the 6 plots, expanding bottom margin for longer text
+  par(mfrow = c(2, 3), mar = c(11, 4, 2, 1))
   
   # Plot 1: Marginal Coverage
   draw_paper_boxplot(all_data, 
                      metric_col = "Marginal coverage", 
-                     y_label = "Coverage rate", 
+                     y_label = "Overall Coverage Rate", 
                      add_target_line = TRUE)
   
-  # Plot 2: Average Lower Bound
-  draw_paper_boxplot(all_data, 
-                     metric_col = "lower bound values mean", 
-                     y_label = "Average lower bound", 
-                     add_target_line = FALSE)
-  
-  # Plot 3: Subgroup Coverage (X1 = 0)
+  # Plot 2: Subgroup Coverage (X1 = 0)
   draw_paper_boxplot(all_data, 
                      metric_col = "group coverage for x_1 = 0", 
                      y_label = "Coverage rate (x_1 = 0)", 
                      add_target_line = TRUE)
   
-  # Plot 4: Subgroup Coverage (X1 = 1)
+  # Plot 3: Subgroup Coverage (X1 = 1)
   draw_paper_boxplot(all_data, 
                      metric_col = "group coverage for x_1 = 1", 
                      y_label = "Coverage rate (x_1 = 1)", 
                      add_target_line = TRUE)
   
+  # Plot 4: Overall Average Lower Bound
+  draw_paper_boxplot(all_data, 
+                     metric_col = "lower bound values mean", 
+                     y_label = "Overall Average Lower Bound", 
+                     add_target_line = FALSE)
+
+  # Plot 5: Lower Bound Mean for X1 = 0
+  draw_paper_boxplot(all_data, 
+                     metric_col = "lower bound mean for x_1 = 0", 
+                     y_label = "Average Lower Bound (x_1 = 0)", 
+                     add_target_line = FALSE)
+                     
+  # Plot 6: Lower Bound Mean for X1 = 1
+  draw_paper_boxplot(all_data, 
+                     metric_col = "lower bound mean for x_1 = 1", 
+                     y_label = "Average Lower Bound (x_1 = 1)", 
+                     add_target_line = FALSE)
+
   dev.off() # Close the PDF writer
   cat(sprintf("  -> Plots saved to: %s\n", pdf_name))
 }

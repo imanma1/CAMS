@@ -22,22 +22,16 @@ cox_based <- function(x,alpha,
   newdata <- data.frame(x)
   colnames(newdata) <- xnames
   fmla <- as.formula(paste("Surv(censored_T, event) ~ ", paste(xnames, collapse= "+")))
-  start_time <- proc.time()[3]
   mdl <- survreg(fmla, data = data_fit, dist= "weibull")
-  servregtime <- proc.time()[3] - start_time
-  cat(sprintf("servreg in %.2f seconds.\n", servregtime))
 
   ## The fitted quantile for the calibration data
   xdf <- data.frame(data_calib[,names(data_calib) %in% xnames])
   colnames(xdf) = colnames(newdata)
-  start_time <- proc.time()[3]
   res <- predict(mdl,
                  newdata = xdf,
                  type = "quantile",
                  p = alpha)
-  time_pred <- proc.time()[3] - start_time
-  cat(sprintf("predict in %.2f seconds.\n", time_pred))
-  quant <-  res  
+  quant <-  res
   score <- quant-data_calib$censored_T
   
   # cutoff for quantile of C
