@@ -1,7 +1,6 @@
-simu <- function(seed, setting, n, p,
+simu <- function(seed, setting,
                  n_train, n_calib, n_test,
-                 , xmin, xmax,
-                 , alpha) {
+                 xmin, xmax, alpha) {
   mod <- "cox"
 
   ## Initialization
@@ -20,14 +19,12 @@ simu <- function(seed, setting, n, p,
   data_test <- data_obj$data_test
   data <- data_obj$data
   T_test <- data_obj$T_test
-  
-  alpha_list <- alpha
-  
+
   ########################################
   ## Core Pipeline Helper Function
   ########################################
   # This function trains all 6 methods and returns their lower bounds and times
-  run_pipeline <- function(sub_fit, sub_calib, sub_test, sub_data, xnames_to_use, alpha_list, seed, mod) {
+  run_pipeline <- function(sub_fit, sub_calib, sub_test, sub_data, xnames_to_use, alpha, seed, mod) {
     # Utility function to safely extract quantiles from a coxph object
     extract_quant <- function(mdl, x, alpha){
       res <- summary(survfit(mdl, newdata = x))
@@ -68,7 +65,7 @@ simu <- function(seed, setting, n, p,
     # 2. cfsurv_c (qt and qct)
     cat("Training cfsurv_c...\n")
     start_time <- proc.time()[3]
-    lb_res <- cfsurv_c(x=x, Xtrain=Xtrain, C=C, event=event, time=time, alpha=alpha_list, mdl0=mdl0)
+    lb_res <- cfsurv_c(x=x, Xtrain=Xtrain, C=C, event=event, time=time, alpha=alpha, mdl0=mdl0)
     time_q <- proc.time()[3] - start_time
     
     res1 <- lb_res$lower_bnd_qtl
@@ -86,22 +83,22 @@ simu <- function(seed, setting, n, p,
     cat("Training cfsurv (qc0)...\n")
     start_time <- proc.time()[3]
 
-    res0 <- cfsurv(x = x, 
-                   c_list = NULL, 
+    res0 <- cfsurv(x = x,
+                   c_list = NULL,
                    pr_list = NULL, 
                    pr_new_list = NULL,
                    Xtrain = Xtrain,
                    C = C,
                    event = event,
                    time = time,
-                   alpha = alpha_list, 
+                   alpha = alpha,
                    type = "quantile",
                    model = mod, 
-                   dist = "weibull", 
-                   I_fit = NULL, 
-                   ftol = 0.1, 
+                   dist = "weibull",
+                   I_fit = NULL,
+                   ftol = 0.1,
                    tol = 0.1,
-                   n.tree = 100, 
+                   n.tree = 100,
                    mdl0 = mdl0)
 
     time_qc0 <- proc.time()[3] - start_time + time_mdl0
@@ -111,7 +108,7 @@ simu <- function(seed, setting, n, p,
     # 4. vanilla CQR
     cat("Training vanilla CQR...\n")
     start_time <- proc.time()[3]
-    res <- lapply(alpha_list, cqr,
+    res <- lapply(alpha, cqr,
                   x = x,
                   Xtrain = Xtrain,
                   Ytrain = sub_data$censored_T,
@@ -130,7 +127,7 @@ simu <- function(seed, setting, n, p,
     mdl <- coxph(fmla, data = sub_data)
     cox_res <- c()
     for (i in 1:nrow(sub_test)) {
-       cox_res <- c(cox_res, extract_quant(mdl, sub_test[i, , drop=FALSE], alpha_list))
+       cox_res <- c(cox_res, extract_quant(mdl, sub_test[i, , drop=FALSE], alpha))
     }
     output$cox.bnd <- cox_res
     cox_time <- proc.time()[3] - start_time
@@ -146,7 +143,7 @@ simu <- function(seed, setting, n, p,
     mdl <- crf.km(fmla_rf, ntree = ntree, nodesize = nodesize,
                   data_train = sub_data[, c(xnames_to_use, "censored_T", "event"), drop=FALSE], 
                   data_test = sub_test[, xnames_to_use, drop=FALSE], 
-                  yname = 'censored_T', iname = 'event', tau = alpha_list, method = "grf")
+                  yname = 'censored_T', iname = 'event', tau = alpha, method = "grf")
     output$rf.bnd <- mdl$predicted
     rf_time <- proc.time()[3] - start_time
     times <- c(times, rf_time)
@@ -167,7 +164,7 @@ simu <- function(seed, setting, n, p,
   ########################################
   cat("========== Executing Approach 1: Joint Modeling ==========\n")
   res_joint <- run_pipeline(data_fit, data_calib, data_test, data, 
-                            xnames, alpha_list, seed, mod)
+                            xnames, alpha, seed, mod)
 
   ########################################
   ## APPROACH 3: CAMS
@@ -213,14 +210,14 @@ simu <- function(seed, setting, n, p,
                         data_calib[data_calib$X1 == 0, , drop=FALSE],
                         data_test[data_test$X1 == 0, , drop=FALSE],
                         data[data$X1 == 0, , drop=FALSE],
-                        xnames_sub, alpha_list, seed, mod)
+                        xnames_sub, alpha, seed, mod)
                                  
   cat("========== Executing Approach 2: Subgroup X1 = 1 ==========\n")
   res_1 <- run_pipeline(data_fit[data_fit$X1 == 1, , drop=FALSE],
                         data_calib[data_calib$X1 == 1, , drop=FALSE],
                         data_test[data_test$X1 == 1, , drop=FALSE],
                         data[data$X1 == 1, , drop=FALSE],
-                        xnames_sub, alpha_list, seed, mod)
+                        xnames_sub, alpha, seed, mod)
   
   # Merge subgroup outputs to map exactly to the data_test row order
   output_subgroup <- data.frame(matrix(ncol = ncol(res_0$output), nrow = nrow(data_test)))
