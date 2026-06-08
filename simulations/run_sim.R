@@ -29,22 +29,17 @@ source("./simu.R")
 ########################################
 ## configurations
 ########################################
-setting_list = c("ld_setting1",
-                 "ld_setting2",
-                 "ld_setting3",
-                 "ld_setting4",
-                 "hd_homosc",
-                 "hd_heterosc")
+setting_list = c("homo_cens", "cov_cens", "prot_cens", 
+                 "heavy_prot_cens", "heavy_inter_cens", 
+                 "surv_misspec", "cens_misspec", "simul_misspec")
 
 alpha <- .1    # target level 1-alpha
 n <- 500
 n_test <- 2500
 n_train <- n
 n_calib <- n
-xmin <- 0 
-xmax <- 4
-beta <- 20 / sqrt(n)
-exp_rate <- .1
+xmin <- -2
+xmax <- 2
 
 num_runs <- 5
 
@@ -68,17 +63,10 @@ for(i in 1:num_runs){
   for(setting in setting_list){
     cat(sprintf("\n=== Run %d | Setting: %s ===\n", i, setting))
     
-    if(setting %in% c("hd_homosc","hd_heterosc")){
-      p <- 10
-    }else{
-      p <- 1
-    }
-    
     # Run the simulation
-    simures <- simu(current_seed + 1234, setting, n, p,
+    simures <- simu(current_seed + 1234, setting,
                     n_train, n_calib, n_test,
-                    beta, xmin, xmax,
-                    exp_rate, alpha)
+                    xmin, xmax, alpha)
     
     # Save the result file directly into the newly created numbered folder
     save_dir <- sprintf("%s/%s_seed_%d.csv", run_folder, setting, current_seed)

@@ -34,7 +34,7 @@ alpha_qt <- function(mdl, newdata, data_fit, data_calib, xnames, alpha, len_x, m
   # === OPTIMIZATION 3: PARALLELIZE THRESHOLD EVALUATION ===
   library(parallel)
   if (.Platform$OS.type == "windows") {
-    n_threads <- 1  
+    n_threads <- 1
   } else {
     slurm_cores <- as.numeric(Sys.getenv("SLURM_CPUS_PER_TASK"))
     n_threads <- ifelse(is.na(slurm_cores), detectCores(), slurm_cores)
@@ -48,9 +48,9 @@ alpha_qt <- function(mdl, newdata, data_fit, data_calib, xnames, alpha, len_x, m
 
   # monotonize alpha
   alpha_v <- monot(alpha_v_list)
-  if(sum(alpha_v<=alpha)==0){
+  if(sum(alpha_v <= alpha) == 0) {
     v_hat_l = NULL
-  }else{
+  } else {
     v_hat_l <- min(v_list[alpha_v <= alpha])
   }
   
@@ -118,7 +118,7 @@ alpha_qct <- function(mdl, qc_mdl, newdata, data_fit, data_calib, xnames, alpha,
   
   # monotonize alpha
   alpha_v <- monot(alpha_v_list)
-  if(sum(alpha_v<=alpha)==0){
+  if(sum(alpha_v <= alpha) == 0) {
     v_hat_l = NULL
   }else{
     v_hat_l <- min(v_list[alpha_v <= alpha])

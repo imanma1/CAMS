@@ -1,262 +1,118 @@
-# Added a bernouli(0.3) variable for all settings as the first variable
+# Added a bernoulli(0.3) variable for all settings as the first variable
 
 model_generating_fun <- function(n_train, n_calib, n_test,
-                                 setting, beta, xnames, xmin, xmax, exp_rate){
+                                 setting, xmin, xmax){
 
   bernoulli_prob <- 0.3
   
-  if(setting == "ld_setting1"){
-    p <- 2 # Updated to 2 features
-    sigma_x <- function(x) (5 - x[,2])/10 # Shifted to x[,2]
-    
-    ########################################
-    ## Data generating models
-    ########################################
-    gen_t <- function(x) exp(beta * x[,2] +  2 * rnorm(nrow(x)))
-    gen_c <- function(x) rexp(rate = exp_rate, n = nrow(x))
-    
-    ########################################
-    ## Generate training data
-    ########################################
-    X_bern <- rbinom(n_train, 1, bernoulli_prob)
-    X_cont <- runif(n_train, xmin, xmax)
-    X <- data.frame(X1 = X_bern, X2 = X_cont)
-    
-    T <- gen_t(X)
-    C <- gen_c(X)
-    event <- (T < C)
-    censored_T <- pmin(T, C)
-    data_fit <- data.frame(X, C = C, censored_T = censored_T, event = event)
-    
-    ########################################
-    ## Generate the calibration data and the test data
-    ########################################
-    X_bern <- rbinom(n_calib + n_test, 1, bernoulli_prob)
-    X_cont <- runif(n_calib + n_test, xmin, xmax)     
-    X <- data.frame(X1 = X_bern, X2 = X_cont)
-    
-    T <- gen_t(X) 
-    C <- gen_c(X)
-    event <- (T < C)
-    censored_T <- pmin(T, C)
-    data <- data.frame(X, C = C, event = event, censored_T = censored_T)
-    data_calib <- data[1 : n_calib, ]
-    data_test <- data[(n_calib + 1) : (n_calib + n_test),]
-    data <- rbind(data_fit, data_calib)
-    T_test = T[(n_calib + 1) : (n_calib + n_test)]
-  }
-  
-  if(setting == "ld_setting2"){
+  # =====================================================================
+  # 1. DEFINE SETTING FORMULAS AND DIMENSIONS
+  # =====================================================================
+  if (setting == "homo_cens") {
+    # Setting (i): Homogeneous censoring
     p <- 2
+    gen_t <- function(x) exp(2 + 0.5 * x[,2] - 0.5 * x[,1] + 0.5 * rnorm(nrow(x)))
+    gen_c <- function(x) exp(3.0 + 0.5 * rnorm(nrow(x)))
     
-    ########################################
-    ## Data generating models
-    ########################################
-    sigma_x <- function(x) (5 + x[,2])/10
-    gen_t <- function(x) exp(3*(x[,2]>2) + 1*x[,2]*(x[,2]<=2) + 0.5 * rnorm(nrow(x)))
-    gen_c <- function(x) rexp(rate = exp_rate, n = nrow(x))
-    
-    ########################################
-    ## Generate training data
-    ########################################
-    X_bern <- rbinom(n_train, 1, bernoulli_prob)
-    X_cont <- runif(n_train, xmin, xmax)
-    X <- data.frame(X1 = X_bern, X2 = X_cont)
-    
-    T <- gen_t(X)
-    C <- gen_c(X)
-    event <- (T < C)
-    censored_T <- pmin(T, C)
-    data_fit <- data.frame(X, C = C, censored_T = censored_T, event = event)
-    
-    ########################################
-    ## Generate the calibration data and the test data
-    ########################################
-    X_bern <- rbinom(n_calib + n_test, 1, bernoulli_prob)
-    X_cont <- runif(n_calib + n_test, xmin, xmax)     
-    X <- data.frame(X1 = X_bern, X2 = X_cont)
-    
-    T <- gen_t(X) 
-    C <- gen_c(X)
-    event <- (T < C)
-    censored_T <- pmin(T, C)
-    data <- data.frame(X, C = C, event = event, censored_T = censored_T)
-    data_calib <- data[1 : n_calib, ]
-    data_test <- data[(n_calib + 1) : (n_calib + n_test),]
-    data <- rbind(data_fit, data_calib)
-    T_test = T[(n_calib + 1) : (n_calib + n_test)]
-  }
-  
-  if(setting == "ld_setting3"){
+  } else if (setting == "cov_cens") {
+    # Setting (ii): Censoring depending on ordinary covariates
     p <- 2
-    ########################################
-    ## Data generating models
-    ########################################
-    gen_t <- function(x) exp(2 * (x[,2]>2) + 1 * x[,2] *(x[,2]<=2) + 0.5 * rnorm(nrow(x)))
-    gen_c <- function(x) rexp(rate = exp_rate * (2.5 + (6+x[,2])/10), n = nrow(x))
+    gen_t <- function(x) exp(2 + 0.5 * x[,2] - 0.5 * x[,1] + 0.5 * rnorm(nrow(x)))
+    gen_c <- function(x) exp(2.5 + 1.2 * x[,2] + 0.5 * rnorm(nrow(x)))
     
-    ########################################
-    ## Generate training data
-    ########################################
-    X_bern <- rbinom(n_train, 1, bernoulli_prob)
-    X_cont <- runif(n_train, xmin, xmax)
-    X <- data.frame(X1 = X_bern, X2 = X_cont)
-    
-    T <- gen_t(X)
-    C <- gen_c(X)
-    event <- (T < C)
-    censored_T <- pmin(T, C)
-    data_fit <- data.frame(X, C = C, censored_T = censored_T, event = event)
-    
-    ########################################
-    ## Generate the calibration data and the test data
-    ########################################
-    X_bern <- rbinom(n_calib + n_test, 1, bernoulli_prob)
-    X_cont <- runif(n_calib + n_test, xmin, xmax)     
-    X <- data.frame(X1 = X_bern, X2 = X_cont)
-    
-    T <- gen_t(X) 
-    C <- gen_c(X)
-    event <- (T < C)
-    censored_T <- pmin(T, C)
-    data <- data.frame(X, C = C, event = event, censored_T = censored_T)
-    data_calib <- data[1 : n_calib, ]
-    data_test <- data[(n_calib + 1) : (n_calib + n_test),]
-    data <- rbind(data_fit, data_calib)
-    T_test = T[(n_calib + 1) : (n_calib + n_test)]
-  }
-  
-  if(setting == "ld_setting4"){
+  } else if (setting == "prot_cens") {
+    # Setting (iii): Censoring depending on Protected Group
     p <- 2
+    gen_t <- function(x) exp(2 + 0.5 * x[,2] - 0.5 * x[,1] + 0.5 * rnorm(nrow(x)))
+    gen_c <- function(x) exp(3.0 - 1.5 * x[,1] + 0.5 * rnorm(nrow(x)))
     
-    ########################################
-    ## Data generating models
-    ########################################
-    gen_t <- function(x) exp(3 * (x[,2]>2) + 1.5 * x[,2] *(x[,2]<=2) + 0.5 * rnorm(nrow(x)))
-    gen_c <- function(x) exp(2 + (2-x[,2]) / 50 + 0.5 * rnorm(nrow(x)))
+  } else if (setting == "heavy_prot_cens") {
+    # Setting (iv): Heavy censoring in one protected group
+    p <- 2
+    gen_t <- function(x) exp(2 + 0.5 * x[,2] + 0.5 * rnorm(nrow(x)))
+    gen_c <- function(x) exp(3.5 - 2.8 * x[,1] + 0.5 * rnorm(nrow(x)))
     
-    ########################################
-    ## Generate training data
-    ########################################
-    X_bern <- rbinom(n_train, 1, bernoulli_prob)
-    X_cont <- runif(n_train, xmin, xmax)
-    X <- data.frame(X1 = X_bern, X2 = X_cont)
+  } else if (setting == "heavy_inter_cens") {
+    # Setting (v): Heavy censoring in an intersectional subgroup
+    p <- 2
+    gen_t <- function(x) exp(2 + 0.5 * x[,2] + 0.5 * rnorm(nrow(x)))
+    # R automatically coerces the boolean (x[,1]==1 & x[,2]>0) into 1s and 0s
+    gen_c <- function(x) exp(3.5 - 2.8 * (x[,1] == 1 & x[,2] > 0) + 0.5 * rnorm(nrow(x)))
     
-    T <- gen_t(X)
-    C <- gen_c(X)
-    event <- (T < C)
-    censored_T <- pmin(T, C)
-    data_fit <- data.frame(X, C = C, censored_T = censored_T, event = event)
+  } else if (setting == "surv_misspec") {
+    # Setting (vi): Survival-model misspecification
+    p <- 3
+    gen_t <- function(x) exp(2 + 0.5 * (x[,2]^2) + sin(x[,3]) * x[,1] + 0.5 * rnorm(nrow(x)))
+    gen_c <- function(x) exp(2.5 + 0.5 * x[,2] + 0.5 * rnorm(nrow(x)))
     
-    ########################################
-    ## Generate the calibration data and the test data
-    ########################################
-    X_bern <- rbinom(n_calib + n_test, 1, bernoulli_prob)
-    X_cont <- runif(n_calib + n_test, xmin, xmax)     
-    X <- data.frame(X1 = X_bern, X2 = X_cont)
+  } else if (setting == "cens_misspec") {
+    # Setting (vii): Censoring-model misspecification (10 Variables)
+    p <- 10
+    gen_t <- function(x) exp(2 + 0.5 * x[,2] - 0.5 * x[,1] + 0.1 * rowSums(x[, 4:10, drop=FALSE]) + 0.5 * rnorm(nrow(x)))
+    gen_c <- function(x) exp(2.5 + (x[,2]^2) * x[,1] + cos(x[,3]) + 0.2 * rowSums(x[, 4:10, drop=FALSE]^2) + 0.5 * rnorm(nrow(x)))
     
-    T <- gen_t(X) 
-    C <- gen_c(X)
-    event <- (T < C)
-    censored_T <- pmin(T, C)
-    data <- data.frame(X, C = C, event = event, censored_T = censored_T)
-    data_calib <- data[1 : n_calib, ]
-    data_test <- data[(n_calib + 1) : (n_calib + n_test),]
-    data <- rbind(data_fit, data_calib)
-    T_test = T[(n_calib + 1) : (n_calib + n_test)]
+  } else if (setting == "simul_misspec") {
+    # Setting (viii): Simultaneous moderate misspecification (10 Variables)
+    p <- 10
+    # X_i * X_{i-1} is calculated via vectorized element-wise matrix multiplication
+    gen_t <- function(x) exp(2 + 0.5 * (x[,2]^2) + 0.5 * x[,2] * x[,1] + 
+                               0.1 * rowSums(x[, 3:10, drop=FALSE] * x[, 2:9, drop=FALSE]) + 0.5 * rnorm(nrow(x)))
+    gen_c <- function(x) exp(2.5 + (x[,3]^2) - 1.5 * x[,1] + 
+                               0.1 * rowSums(abs(x[, 4:10, drop=FALSE])) + 0.5 * rnorm(nrow(x)))
+                               
+  } else {
+    stop(sprintf("Unknown setting: %s", setting))
+  }
+
+  # =====================================================================
+  # 2. GENERATE ALL DATA (Unified Logic)
+  # =====================================================================
+  n_total <- n_train + n_calib + n_test
+  
+  # Generate Protected Attribute X1
+  X_bern <- rbinom(n_total, 1, bernoulli_prob)
+  
+  # Generate Continuous Attributes X2 through Xp
+  if (p > 1) {
+    X_cont <- matrix(runif(n_total * (p - 1), xmin, xmax), nrow = n_total, ncol = p - 1)
+    X <- data.frame(X1 = X_bern, X_cont)
+  } else {
+    X <- data.frame(X1 = X_bern)
   }
   
-  if(setting == "hd_homosc"){
-    p_cont <- length(xnames)
-    new_xnames <- paste0("X", 1:(p_cont + 1)) # Create updated names for p+1 variables
-    
-    ########################################
-    ## Data generating models (Indices shifted +1)
-    ########################################
-    mu_x <- function(x) (beta * x[,2] + beta * sqrt(x[,4] * x[,6])) / 5 + 1
-    gen_t <- function(x) exp(mu_x(x) + rnorm(nrow(x)))
-    gen_c <- function(x) rexp(rate = exp_rate * (x[,11] + 0.5), n = nrow(x))
-    
-    ## Generate training data
-    X_cont <- matrix(runif(n_train * p_cont, min = xmin, max = xmax), n_train)
-    X_bern <- rbinom(n_train, 1, bernoulli_prob)
-    X <- cbind(X_bern, X_cont)
-    
-    T <- gen_t(X)
-    C <- gen_c(X) 
-    event <- (T<C)
-    censored_T <- pmin(T,C)
-    data_fit <- data.frame(X, C = C, censored_T = censored_T, event = event)
-    colnames(data_fit) <- c(new_xnames, "C", "censored_T", "event")
-    
-    ########################################
-    ## Generate the calibration data and the test data
-    ########################################
-    X_cont <- matrix(runif((n_calib + n_test) * p_cont, min = xmin, max = xmax), n_calib + n_test)
-    X_bern <- rbinom(n_calib + n_test, 1, bernoulli_prob)
-    X <- cbind(X_bern, X_cont)
-    
-    T <- gen_t(X)
-    C <- gen_c(X)
-    event <- (T<C)
-    censored_T <- pmin(T,C)
-    data <- data.frame(X, C = C, censored_T = censored_T,  event = event)
-    colnames(data) <- c(new_xnames, "C", "censored_T", "event")
-    data_calib <- data[1:n_calib,]
-    data_test <- data[(n_calib+1) : (n_calib+n_test),]
-    data <- rbind(data_fit,data_calib)
-    T_test = T[(n_calib + 1) : (n_calib + n_test)]
-  }
+  # Enforce consistent standard column names (X1, X2, ... Xp)
+  colnames(X) <- paste0("X", 1:p)
+
+  # Calculate Event Times and Censoring Times based on the selected setting formulas
+  T_time <- gen_t(X)
+  C_time <- gen_c(X)
   
-  if(setting == "hd_heterosc"){
-    p_cont <- length(xnames)
-    new_xnames <- paste0("X", 1:(p_cont + 1))
-    
-    ########################################
-    ## Data generating models (Indices shifted +1)
-    ########################################
-    mu_x <- function(x) (beta * x[,2] + beta * sqrt(x[,4] * x[,6])) / 5 + 1
-    sigma_x <- function(x) (x[,3] + 2) / 4 # Shifted from x[,2] to x[,3]
-    gen_t <- function(x) exp(mu_x(x) + sigma_x(x) * rnorm(nrow(x)))
-    gen_c <- function(x) rexp(rate = exp_rate * (x[,11] + 0.5), n = nrow(x))
-    
-    ## Generate training data
-    X_cont <- matrix(runif(n_train * p_cont, min = xmin, max = xmax), n_train)
-    X_bern <- rbinom(n_train, 1, bernoulli_prob)
-    X <- cbind(X_bern, X_cont)
-    
-    T <- gen_t(X)
-    C <- gen_c(X) 
-    event <- (T<C)
-    censored_T <- pmin(T,C)
-    data_fit <- data.frame(X, C = C, censored_T = censored_T, event = event)
-    colnames(data_fit) <- c(new_xnames, "C", "censored_T", "event")
-    
-    ########################################
-    ## Generate the calibration data and the test data
-    ########################################
-    X_cont <- matrix(runif((n_calib + n_test) * p_cont, min = xmin, max = xmax), n_calib + n_test)
-    X_bern <- rbinom(n_calib + n_test, 1, bernoulli_prob)
-    X <- cbind(X_bern, X_cont)
-    
-    T <- gen_t(X)
-    C <- gen_c(X)
-    event <- (T<C)
-    censored_T <- pmin(T,C)
-    data <- data.frame(X, C = C, censored_T = censored_T,  event = event)
-    colnames(data) <- c(new_xnames, "C", "censored_T", "event")
-    data_calib <- data[1:n_calib,]
-    data_test <- data[(n_calib+1) : (n_calib+n_test),]
-    data <- rbind(data_fit,data_calib)
-    T_test = T[(n_calib + 1) : (n_calib + n_test)]
-  }
+  event <- (T_time < C_time)
+  censored_T <- pmin(T_time, C_time)
   
-  ## Collect results 
+  # Bind everything into a master data frame
+  data_full <- data.frame(X, C = C_time, censored_T = censored_T, event = event)
+
+  # =====================================================================
+  # 3. SPLIT DATA INTO TRAIN, CALIB, AND TEST
+  # =====================================================================
+  data_fit <- data_full[1:n_train, , drop=FALSE]
+  data_calib <- data_full[(n_train + 1):(n_train + n_calib), , drop=FALSE]
+  data_test <- data_full[(n_train + n_calib + 1):n_total, , drop=FALSE]
+  
+  # Original code expects 'data' to contain fit + calib 
+  data <- rbind(data_fit, data_calib)
+  
+  # Extract exact test event times
+  T_test <- T_time[(n_train + n_calib + 1):n_total]
+
+  # Collect results 
   obj <- list(data_fit = data_fit, 
               data_calib = data_calib, 
               data_test = data_test, 
               data = data, 
-              T_test = T_test)
+              T_test = T_test,
+              p = p)
   
   return(obj)
 }
