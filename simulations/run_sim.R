@@ -41,7 +41,7 @@ n_calib <- n
 xmin <- -2
 xmax <- 2
 
-num_runs <- 50
+num_runs <- 5
 
 # Detect cores just to print a helpful message (the actual multithreading happens inside the utils scripts)
 slurm_cores <- as.numeric(Sys.getenv("SLURM_CPUS_PER_TASK"))
@@ -52,26 +52,27 @@ cat(sprintf("Starting sequential outer loop. Inner algorithms will utilize %d co
 ### SEQUENTIAL LOOP (Letting inner functions multithread)
 ########################################
 for(i in 1:num_runs){
-  
   # Update the seed for each run
-  current_seed <- i
+  current_seed <- current_seed <- seed + (i - 1)
   
   # Create a separate folder named with the run number inside the 'results' folder
   run_folder <- sprintf("../results/%d", current_seed)
   dir.create(run_folder, showWarnings = FALSE, recursive = TRUE)
-  
+  run_start_time <- proc.time()[3]
   for(setting in setting_list){
     cat(sprintf("\n=== Run %d | Setting: %s ===\n", i, setting))
     
+    start_time <- proc.time()[3]
     # Run the simulation
     simures <- simu(current_seed + 1234, setting,
                     n_train, n_calib, n_test,
                     xmin, xmax, alpha)
+    cat(sprintf("%s for run %d: %.2f seconds.\n", setting, i, proc.time()[3] - start_time))
     
     # Save the result file directly into the newly created numbered folder
     save_dir <- sprintf("%s/%s_seed_%d.csv", run_folder, setting, current_seed)
     write.csv(simures, save_dir)
   }
   
-  cat(sprintf("\nCompleted run %d/%d\n", i, num_runs))
+  cat(sprintf("\nCompleted run %d/%d in %.2f seconds.\n", i, num_runs, proc.time()[3] - run_start_time))
 }

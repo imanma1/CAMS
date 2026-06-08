@@ -3,11 +3,8 @@
 ## using estimated quantile of T
 ############################################
 alpha_qt <- function(mdl, newdata, data_fit, data_calib, xnames, alpha, len_x, mdl0, cens_rt){
-  
-  start_time <- proc.time()[3]
   v_list = v_pts_qt(mdl, data_fit, data_calib, xnames, alpha, cens_rt)
   v_list = sort(unique(as.numeric(v_list)))
-  cat(sprintf("v_pts_qt in %.2f seconds\n", proc.time()[3] - start_time))
   
   # === OPTIMIZATION 1: PRE-COMPUTE GAUPRO ===
   # Do not call predict() inside the loop! Do it once here.
@@ -42,9 +39,7 @@ alpha_qt <- function(mdl, newdata, data_fit, data_calib, xnames, alpha, len_x, m
   
   # Use mclapply to evaluate the thresholds across cores. 
   # We wrap it in unlist() because mclapply returns a list, and we need a numeric vector.
-  start_time <- proc.time()[3]
   alpha_v_list <- unlist(mclapply(v_list, est_alpha_qt_fast, mc.cores = n_threads))
-  cat(sprintf("est_alpha_qt_fast in %.2f seconds\n", proc.time()[3] - start_time))
 
   # monotonize alpha
   alpha_v <- monot(alpha_v_list)
@@ -76,11 +71,8 @@ alpha_qt <- function(mdl, newdata, data_fit, data_calib, xnames, alpha, len_x, m
 ## from the L_v defined based on integrtaed quantiles
 ################################################################
 alpha_qct <- function(mdl, qc_mdl, newdata, data_fit, data_calib, xnames, alpha, len_x, mdl0, cens_rt){
-
-  start_time <- proc.time()[3]
   v_list = v_pts_qct(mdl, qc_mdl, data_fit, data_calib, xnames, alpha, cens_rt)
   v_list = sort(unique(as.numeric(v_list)))
-  cat(sprintf("v_pts_qct in %.2f seconds\n", proc.time()[3] - start_time))
 
   # === OPTIMIZATION 1: PRE-COMPUTE GAUPRO ===
   calib_mat <- as.matrix(data_calib[,names(data_calib) %in% xnames, drop=FALSE])
@@ -112,9 +104,7 @@ alpha_qct <- function(mdl, qc_mdl, newdata, data_fit, data_calib, xnames, alpha,
   }
 
   # Use mclapply to evaluate the thresholds across cores.
-  est_start_time <- proc.time()[3]
   alpha_v_list <- unlist(mclapply(v_list, est_alpha_qct_fast, mc.cores = n_threads))
-  cat(sprintf("est_alpha_qct_fast in %.2f seconds\n", proc.time()[3] - est_start_time))
   
   # monotonize alpha
   alpha_v <- monot(alpha_v_list)

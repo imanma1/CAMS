@@ -52,11 +52,7 @@ cox_based <- function(x,alpha,
   start_time = proc.time()[3]
   ## Fit the model for C with quantile_forest (now only supports 1d)
   fit_X <- data.frame(X = data_fit[,names(data_fit) %in% xnames])
-  start_time0 <- proc.time()[3]
   qc_mdl <- quantile_forest(fit_X, as.vector(data_fit$C))
-  time_qc_mdl <- proc.time()[3] - start_time0
-  cat(sprintf("quantile_forest in %.2f seconds.\n",
-              time_qc_mdl))
   
   qct_res <- alpha_qct(mdl, qc_mdl, newdata,
                      data_fit, data_calib,

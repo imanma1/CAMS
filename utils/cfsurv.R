@@ -127,7 +127,6 @@ cfsurv <- function(x,c_list=NULL,
   newdata <- data.frame(x)
   colnames(newdata) <- xnames
   
-  start_time <- proc.time()[3]
   ## If c is not specified, select c automatically 
   if(is.null(c_list)){
     ref_length <- 100
@@ -171,8 +170,6 @@ cfsurv <- function(x,c_list=NULL,
       pr_new <- pr_new_list[,c_list==c]
     }
   }
-end_time <- proc.time()[3]
-cat(sprintf("selection_c for in %.2f seconds.\n", end_time - start_time))
 
   ## Computing the weight for the calibration data and the test data
   weight_calib <- 1/pr_calib
@@ -206,7 +203,6 @@ cat(sprintf("selection_c for in %.2f seconds.\n", end_time - start_time))
    }
   
   if(model == "cox"){
-    start_time <- proc.time()[3]
     res = cox0_based(x,c,alpha,
                     data_fit,
                     data_calib,
@@ -216,8 +212,6 @@ cat(sprintf("selection_c for in %.2f seconds.\n", end_time - start_time))
                     weight_new,
                     ftol,
                     tol)
-    end_time <- proc.time()[3]
-    cat(sprintf("cox0_based for in %.2f seconds.\n", end_time - start_time))
    }
   
   if(model == "randomforest"){

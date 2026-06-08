@@ -1,10 +1,20 @@
 simu <- function(seed, setting,
                  n_train, n_calib, n_test,
                  xmin, xmax, alpha) {
+  set.seed(seed)
   mod <- "cox"
 
+  if (.Platform$OS.type != "windows") {
+    library(parallel)
+    library(RhpcBLASctl)
+    slurm_cores <- as.numeric(Sys.getenv("SLURM_CPUS_PER_TASK"))
+    n_threads <- ifelse(is.na(slurm_cores), detectCores(), slurm_cores)
+    # Throttle down to 1 thread to protect mclapply from deadlocking
+    blas_set_num_threads(n_threads)
+    omp_set_num_threads(n_threads)
+  }
+
   ## Initialization
-  set.seed(seed)
 
   ## Generate data according to the setting
   data_obj <- model_generating_fun(n_train, n_calib, n_test,
@@ -50,10 +60,8 @@ simu <- function(seed, setting,
     fit <- sub_fit
     fit$C <- -fit$C
 
-    slurm_cores <- as.numeric(Sys.getenv("SLURM_CPUS_PER_TASK"))
-    n_threads <- ifelse(is.na(slurm_cores), parallel::detectCores(), slurm_cores)
-
     # 1. Estimate mdl0
+    cat("Training mdl0...\n")
     start_time <- proc.time()[3]
     mdl0 <- GauPro::gpkm(X = as.matrix(fit[, xnames_to_use, drop=FALSE]), 
                          Z = fit$C,
@@ -67,6 +75,7 @@ simu <- function(seed, setting,
     start_time <- proc.time()[3]
     lb_res <- cfsurv_c(x=x, Xtrain=Xtrain, C=C, event=event, time=time, alpha=alpha, mdl0=mdl0)
     time_q <- proc.time()[3] - start_time
+    cat(sprintf("cfsurv_c trained in %.2f seconds.\n", time_q))
     
     res1 <- lb_res$lower_bnd_qtl
     res2 <- lb_res$lower_bnd_qctl
@@ -101,7 +110,9 @@ simu <- function(seed, setting,
                    n.tree = 100,
                    mdl0 = mdl0)
 
-    time_qc0 <- proc.time()[3] - start_time + time_mdl0
+    raw_time_qc0 <- proc.time()[3] - start_time
+    cat(sprintf("cfsurv (qc0) trained in %.2f seconds.\n", raw_time_qc0))
+    time_qc0 <- raw_time_qc0 + time_mdl0
     times <- c(times, time_qc0)
     output$qc0 <- res0$res
     
@@ -125,29 +136,42 @@ simu <- function(seed, setting,
     start_time <- proc.time()[3]
     fmla <- as.formula(paste("Surv(censored_T, event) ~", paste(xnames_to_use, collapse="+")))
     mdl <- coxph(fmla, data = sub_data)
-    cox_res <- c()
-    for (i in 1:nrow(sub_test)) {
-       cox_res <- c(cox_res, extract_quant(mdl, sub_test[i, , drop=FALSE], alpha))
+    # mclapply distributes the rows across all available cores
+    if (.Platform$OS.type != "windows") {
+      original_threads <- blas_get_num_procs()
+      # Throttle down to 1 thread to protect mclapply from deadlocking
+      blas_set_num_threads(1)
+      omp_set_num_threads(1)
     }
+    cox_res_list <- mclapply(1:nrow(sub_test), function(i) {
+      extract_quant(mdl, sub_test[i, , drop=FALSE], alpha)
+    }, mc.cores = n_threads)
+
+    if (.Platform$OS.type != "windows") {
+      # Restore the original number of threads after parallel processing
+      blas_set_num_threads(original_threads)
+      omp_set_num_threads(original_threads)
+    }
+    cox_res <- unlist(cox_res_list)
     output$cox.bnd <- cox_res
     cox_time <- proc.time()[3] - start_time
     times <- c(times, cox_time)
     cat(sprintf("Cox Model trained in %.2f seconds.\n", cox_time))
     
-    # 6. Random Forest
-    cat("Training Random Forest...\n")
-    start_time <- proc.time()[3]
-    ntree <- 1000
-    nodesize <- 80
-    fmla_rf <- as.formula(paste("censored_T ~", paste(xnames_to_use, collapse="+")))
-    mdl <- crf.km(fmla_rf, ntree = ntree, nodesize = nodesize,
-                  data_train = sub_data[, c(xnames_to_use, "censored_T", "event"), drop=FALSE], 
-                  data_test = sub_test[, xnames_to_use, drop=FALSE], 
-                  yname = 'censored_T', iname = 'event', tau = alpha, method = "grf")
-    output$rf.bnd <- mdl$predicted
-    rf_time <- proc.time()[3] - start_time
-    times <- c(times, rf_time)
-    cat(sprintf("Random Forest trained in %.2f seconds.\n", rf_time))
+    # # 6. Random Forest
+    # cat("Training Random Forest...\n")
+    # start_time <- proc.time()[3]
+    # ntree <- 1000
+    # nodesize <- 80
+    # fmla_rf <- as.formula(paste("censored_T ~", paste(xnames_to_use, collapse="+")))
+    # mdl <- crf.km(fmla_rf, ntree = ntree, nodesize = nodesize,
+    #               data_train = sub_data[, c(xnames_to_use, "censored_T", "event"), drop=FALSE], 
+    #               data_test = sub_test[, xnames_to_use, drop=FALSE], 
+    #               yname = 'censored_T', iname = 'event', tau = alpha, method = "grf")
+    # output$rf.bnd <- mdl$predicted
+    # rf_time <- proc.time()[3] - start_time
+    # times <- c(times, rf_time)
+    # cat(sprintf("Random Forest trained in %.2f seconds.\n", rf_time))
     
     # RETURN MDL0 so CAMS can use it!
     return(list(output = output, times = times, mdl0 = mdl0))
@@ -165,42 +189,6 @@ simu <- function(seed, setting,
   cat("========== Executing Approach 1: Joint Modeling ==========\n")
   res_joint <- run_pipeline(data_fit, data_calib, data_test, data, 
                             xnames, alpha, seed, mod)
-
-  ########################################
-  ## APPROACH 3: CAMS
-  ########################################
-  # Moved here because we need res_joint$mdl0 to be fully computed first
-  cat("========== Executing Approach 3: CAMS ==========\n")
-  start_time_cams <- proc.time()[3]
-  
-  cams_res <- cams(x = data_test[, xnames, drop=FALSE],
-                   Xtrain = data[, xnames, drop=FALSE],
-                   C = data$C,
-                   event = data$event,
-                   time = data$censored_T,
-                   alpha = alpha,
-                   p = length(xnames),
-                   mdl0 = res_joint$mdl0)  # Borrowing the GPR trained in Joint
-                   
-  time_cams <- proc.time()[3] - start_time_cams
-  cat(sprintf("CAMS evaluated in %.2f seconds.\n", time_cams))
-  
-  # CAMS returns a dataframe, we extract the vector for metric math
-  cams_vec <- cams_res[[1]]
-
-  # Calculate CAMS metrics explicitly
-  df_cams <- data.frame(
-    "method"                       = "CAMS",
-    "setting"                      = setting,
-    "group coverage for x_1 = 0"   = sum(T_test[idx_test_0] >= cams_vec[idx_test_0]) / sum(idx_test_0),
-    "group coverage for x_1 = 1"   = sum(T_test[idx_test_1] >= cams_vec[idx_test_1]) / sum(idx_test_1),
-    "Marginal coverage"            = sum(T_test >= cams_vec) / length(cams_vec),
-    "lower bound mean for x_1 = 0" = mean(cams_vec[idx_test_0]),
-    "lower bound mean for x_1 = 1" = mean(cams_vec[idx_test_1]),
-    "lower bound values mean"      = mean(cams_vec),
-    "computation time"             = time_cams,
-    check.names = FALSE
-  )
 
   ########################################
   ## APPROACH 2: Subgroup Modeling
@@ -225,6 +213,41 @@ simu <- function(seed, setting,
   output_subgroup[idx_test_0, ] <- res_0$output
   output_subgroup[idx_test_1, ] <- res_1$output
   times_subgroup <- res_0$times + res_1$times
+
+  ########################################
+  ## APPROACH 3: CAMS
+  ########################################
+  # Moved here because we need res_joint$mdl0 to be fully computed first
+  cat("========== Executing Approach 3: CAMS ==========\n")
+  start_time_cams <- proc.time()[3]
+  cams_res <- cams(x = data_test[, xnames, drop=FALSE],
+                   Xtrain = data[, xnames, drop=FALSE],
+                   C = data$C,
+                   event = data$event,
+                   time = data$censored_T,
+                   alpha = alpha,
+                   p = length(xnames),
+                   mdl0 = res_joint$mdl0)  # Borrowing the GPR trained in Joint
+                   
+  time_cams <- proc.time()[3] - start_time_cams
+  cat(sprintf("CAMS trained in %.2f seconds.\n", time_cams))
+  
+  # CAMS returns a dataframe, we extract the vector for metric math
+  cams_vec <- cams_res[[1]]
+
+  # Calculate CAMS metrics explicitly
+  df_cams <- data.frame(
+    "method"                       = "CAMS",
+    "setting"                      = setting,
+    "group coverage for x_1 = 0"   = sum(T_test[idx_test_0] >= cams_vec[idx_test_0]) / sum(idx_test_0),
+    "group coverage for x_1 = 1"   = sum(T_test[idx_test_1] >= cams_vec[idx_test_1]) / sum(idx_test_1),
+    "Marginal coverage"            = sum(T_test >= cams_vec) / length(cams_vec),
+    "lower bound mean for x_1 = 0" = mean(cams_vec[idx_test_0]),
+    "lower bound mean for x_1 = 1" = mean(cams_vec[idx_test_1]),
+    "lower bound values mean"      = mean(cams_vec),
+    "computation time"             = time_cams,
+    check.names = FALSE
+  )
 
   ########################################
   ## Format Output Helper
@@ -264,7 +287,7 @@ simu <- function(seed, setting,
   df_subgroup <- compute_metrics(output_subgroup, times_subgroup, "(Subgroup)")
   
   # Append CAMS to the final CSV output
-  simu_out <- rbind(df_cams, df_joint, df_subgroup)
+  simu_out <- rbind(df_cams,  df_subgroup, df_joint)
   rownames(simu_out) <- NULL
   
   return(simu_out)

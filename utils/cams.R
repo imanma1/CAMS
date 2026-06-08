@@ -34,7 +34,6 @@ cams <- function(x,
   # The truncation level eta for the IPCW weights
   eta = 1/log(n)
   
-  start_time = proc.time()[3]
   lower_bnd0 <- est_alpha_ipcw(mdl,
                                newdata[newdata$X1 == 0, , drop=FALSE],
                                data_calib[data_calib$X1 == 0, , drop=FALSE],
@@ -43,8 +42,6 @@ cams <- function(x,
                                newdata[newdata$X1 == 1, , drop=FALSE],
                                data_calib[data_calib$X1 == 1, , drop=FALSE],
                                xnames, alpha, len_x, mdl0, eta)
-  end_time <- proc.time()[3]
-  cat(sprintf("est_alpha_ipcw in %.2f seconds.\n", end_time - start_time))
 
   idx_test_0 <- newdata$X1 == 0
   idx_test_1 <- newdata$X1 == 1
@@ -92,10 +89,7 @@ est_alpha_ipcw <- function(mdl, newdata, data_calib,
     slurm_cores <- as.numeric(Sys.getenv("SLURM_CPUS_PER_TASK"))
     n_threads <- ifelse(is.na(slurm_cores), detectCores(), slurm_cores)
   }
-
-  est_start_time <- proc.time()[3]
   alpha_v_list <- unlist(mclapply(v_list, est_alpha, mc.cores = n_threads))
-  cat(sprintf("est_alpha in %.2f seconds\n", proc.time()[3] - est_start_time))
   
   # monotonize alpha
   alpha_v <- monot(alpha_v_list)
