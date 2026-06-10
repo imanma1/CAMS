@@ -4,6 +4,7 @@ simu <- function(seed, setting,
   set.seed(seed)
   mod <- "cox"
 
+  n_threads <- 1
   if (.Platform$OS.type != "windows") {
     library(parallel)
     library(RhpcBLASctl)
@@ -264,7 +265,7 @@ simu <- function(seed, setting,
     simulen_grp1 <- apply(output_df, 2, function(x) mean(x[idx_test_1]))
     
     method_names <- paste(c("DFT-adaptive-T", "DFT-adaptive-CT", "DFT-fixed", 
-                            "Vanilla CQR", "Cox", "Random Forest"), suffix_label)
+                            "Vanilla CQR", "Cox"), suffix_label)
     
     data.frame(
       "method"                       = method_names,
