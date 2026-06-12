@@ -23,6 +23,8 @@ suppressPackageStartupMessages(library(snow)) # Needed for detecting cores
 source("./source_code.R")
 source("./model_script.R")
 source("./simu.R")
+source("./merge.R")
+source("./fig.R")
 
 ########################################
 ### run simulations
@@ -76,3 +78,6 @@ for(i in 1:num_runs){
   
   cat(sprintf("\nCompleted run %d/%d in %.2f seconds.\n", i, num_runs, proc.time()[3] - run_start_time))
 }
+
+merge()
+make_plots()
