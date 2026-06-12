@@ -15,6 +15,10 @@ simu <- function(seed, setting,
     omp_set_num_threads(n_threads)
   }
 
+  mdl0_dir <- "../saved_models"
+  dir.create(mdl0_dir, showWarnings = FALSE, recursive = TRUE)
+  mdl0_file <- file.path(mdl0_dir, sprintf("mdl0_%s_seed_%d.rds", setting, seed))
+
   ## Initialization
 
   ## Generate data according to the setting
@@ -61,103 +65,112 @@ simu <- function(seed, setting,
     fit <- sub_fit
     fit$C <- -fit$C
 
-    # 1. Estimate mdl0
-    cat("Training mdl0...\n")
-    start_time <- proc.time()[3]
-    mdl0 <- GauPro::gpkm(X = as.matrix(fit[, xnames_to_use, drop=FALSE]), 
-                         Z = fit$C,
-                         kernel = "matern52",
-                         parallel = FALSE)
-    time_mdl0 <- proc.time()[3] - start_time
-    cat(sprintf("mdl0 trained in %.2f seconds.\n", time_mdl0))
-    
-    # 2. cfsurv_c (qt and qct)
-    cat("Training cfsurv_c...\n")
-    start_time <- proc.time()[3]
-    lb_res <- cfsurv_c(x=x, Xtrain=Xtrain, C=C, event=event, time=time, alpha=alpha, mdl0=mdl0)
-    time_q <- proc.time()[3] - start_time
-    cat(sprintf("cfsurv_c trained in %.2f seconds.\n", time_q))
-    
-    res1 <- lb_res$lower_bnd_qtl
-    res2 <- lb_res$lower_bnd_qctl
-    time_qt <- lb_res$time_qt
-    time_qct <- lb_res$time_qct
-    time_q_base <- time_q - (time_qt + time_qct)
-    time_qt <- time_qt + time_q_base + time_mdl0
-    time_qct <- time_qct + time_q_base + time_mdl0
-    
-    times <- c(time_qt, time_qct)
-    output <- data.frame(qtl = res1, qctl = res2)
-    
-    # 3. cfsurv (qc0)
-    cat("Training cfsurv (qc0)...\n")
-    start_time <- proc.time()[3]
 
-    res0 <- cfsurv(x = x,
-                   c_list = NULL,
-                   pr_list = NULL, 
-                   pr_new_list = NULL,
-                   Xtrain = Xtrain,
-                   C = C,
-                   event = event,
-                   time = time,
-                   alpha = alpha,
-                   type = "quantile",
-                   model = mod, 
-                   dist = "weibull",
-                   I_fit = NULL,
-                   ftol = 0.1,
-                   tol = 0.1,
-                   n.tree = 100,
-                   mdl0 = mdl0)
-
-    raw_time_qc0 <- proc.time()[3] - start_time
-    cat(sprintf("cfsurv (qc0) trained in %.2f seconds.\n", raw_time_qc0))
-    time_qc0 <- raw_time_qc0 + time_mdl0
-    times <- c(times, time_qc0)
-    output$qc0 <- res0$res
-    
-    # 4. vanilla CQR
-    cat("Training vanilla CQR...\n")
-    start_time <- proc.time()[3]
-    res <- lapply(alpha, cqr,
-                  x = x,
-                  Xtrain = Xtrain,
-                  Ytrain = sub_data$censored_T,
-                  I_fit = 1:n_train_sub,
-                  seed = seed + 7)
-    res <- do.call(rbind, lapply(res, as.data.frame))
-    output$cqr.bnd <- res[, 1]
-    vanilla_cqr_time <- proc.time()[3] - start_time
-    times <- c(times, vanilla_cqr_time)
-    cat(sprintf("Vanilla CQR trained in %.2f seconds.\n", vanilla_cqr_time))
-    
-    # 5. Cox Model
-    cat("Training Cox Model...\n")
-    start_time <- proc.time()[3]
-    fmla <- as.formula(paste("Surv(censored_T, event) ~", paste(xnames_to_use, collapse="+")))
-    mdl <- coxph(fmla, data = sub_data)
-    # mclapply distributes the rows across all available cores
-    if (.Platform$OS.type != "windows") {
-      original_threads <- blas_get_num_procs()
-      # Throttle down to 1 thread to protect mclapply from deadlocking
-      blas_set_num_threads(1)
-      omp_set_num_threads(1)
+    if (file.exists(mdl0_file)) {
+      cat(sprintf("Found pre-trained mdl0 for %s seed %d. Loading...\n", setting, seed))
+      mdl0 <- readRDS(mdl0_file)
+      time_mdl0 <- 0 # Set to 0 since it didn't take time to train this run
+    } else {
+      cat("Training mdl0...\n")
+      start_time <- proc.time()[3]
+      mdl0 <- GauPro::gpkm(X = as.matrix(fit[, xnames_to_use, drop=FALSE]), 
+                           Z = fit$C,
+                           kernel = "matern52",
+                           parallel = FALSE)
+      time_mdl0 <- proc.time()[3] - start_time
+      cat(sprintf("mdl0 trained in %.2f seconds.\n", time_mdl0))
+      # Save the newly trained model to the hard drive
+      saveRDS(mdl0, file = mdl0_file)
+      cat("Saved mdl0 to disk for future runs.\n")
     }
-    cox_res_list <- mclapply(1:nrow(sub_test), function(i) {
-      extract_quant(mdl, sub_test[i, , drop=FALSE], alpha)
-    }, mc.cores = n_threads)
+    
+    # # 2. cfsurv_c (qt and qct)
+    # cat("Training cfsurv_c...\n")
+    # start_time <- proc.time()[3]
+    # lb_res <- cfsurv_c(x=x, Xtrain=Xtrain, C=C, event=event, time=time, alpha=alpha, mdl0=mdl0)
+    # time_q <- proc.time()[3] - start_time
+    # cat(sprintf("cfsurv_c trained in %.2f seconds.\n", time_q))
+    
+    # res1 <- lb_res$lower_bnd_qtl
+    # res2 <- lb_res$lower_bnd_qctl
+    # time_qt <- lb_res$time_qt
+    # time_qct <- lb_res$time_qct
+    # time_q_base <- time_q - (time_qt + time_qct)
+    # time_qt <- time_qt + time_q_base + time_mdl0
+    # time_qct <- time_qct + time_q_base + time_mdl0
+    
+    # times <- c(time_qt, time_qct)
+    # output <- data.frame(qtl = res1, qctl = res2)
+    
+    # # 3. cfsurv (qc0)
+    # cat("Training cfsurv (qc0)...\n")
+    # start_time <- proc.time()[3]
 
-    if (.Platform$OS.type != "windows") {
-      # Restore the original number of threads after parallel processing
-      blas_set_num_threads(original_threads)
-      omp_set_num_threads(original_threads)
-    }
-    cox_res <- unlist(cox_res_list)
-    output$cox.bnd <- cox_res
-    cox_time <- proc.time()[3] - start_time
-    times <- c(times, cox_time)
-    cat(sprintf("Cox Model trained in %.2f seconds.\n", cox_time))
+    # res0 <- cfsurv(x = x,
+    #                c_list = NULL,
+    #                pr_list = NULL, 
+    #                pr_new_list = NULL,
+    #                Xtrain = Xtrain,
+    #                C = C,
+    #                event = event,
+    #                time = time,
+    #                alpha = alpha,
+    #                type = "quantile",
+    #                model = mod, 
+    #                dist = "weibull",
+    #                I_fit = NULL,
+    #                ftol = 0.1,
+    #                tol = 0.1,
+    #                n.tree = 100,
+    #                mdl0 = mdl0)
+
+    # raw_time_qc0 <- proc.time()[3] - start_time
+    # cat(sprintf("cfsurv (qc0) trained in %.2f seconds.\n", raw_time_qc0))
+    # time_qc0 <- raw_time_qc0 + time_mdl0
+    # times <- c(times, time_qc0)
+    # output$qc0 <- res0$res
+    
+    # # 4. vanilla CQR
+    # cat("Training vanilla CQR...\n")
+    # start_time <- proc.time()[3]
+    # res <- lapply(alpha, cqr,
+    #               x = x,
+    #               Xtrain = Xtrain,
+    #               Ytrain = sub_data$censored_T,
+    #               I_fit = 1:n_train_sub,
+    #               seed = seed + 7)
+    # res <- do.call(rbind, lapply(res, as.data.frame))
+    # output$cqr.bnd <- res[, 1]
+    # vanilla_cqr_time <- proc.time()[3] - start_time
+    # times <- c(times, vanilla_cqr_time)
+    # cat(sprintf("Vanilla CQR trained in %.2f seconds.\n", vanilla_cqr_time))
+    
+    # # 5. Cox Model
+    # cat("Training Cox Model...\n")
+    # start_time <- proc.time()[3]
+    # fmla <- as.formula(paste("Surv(censored_T, event) ~", paste(xnames_to_use, collapse="+")))
+    # mdl <- coxph(fmla, data = sub_data)
+    # # mclapply distributes the rows across all available cores
+    # if (.Platform$OS.type != "windows") {
+    #   original_threads <- blas_get_num_procs()
+    #   # Throttle down to 1 thread to protect mclapply from deadlocking
+    #   blas_set_num_threads(1)
+    #   omp_set_num_threads(1)
+    # }
+    # cox_res_list <- mclapply(1:nrow(sub_test), function(i) {
+    #   extract_quant(mdl, sub_test[i, , drop=FALSE], alpha)
+    # }, mc.cores = n_threads)
+
+    # if (.Platform$OS.type != "windows") {
+    #   # Restore the original number of threads after parallel processing
+    #   blas_set_num_threads(original_threads)
+    #   omp_set_num_threads(original_threads)
+    # }
+    # cox_res <- unlist(cox_res_list)
+    # output$cox.bnd <- cox_res
+    # cox_time <- proc.time()[3] - start_time
+    # times <- c(times, cox_time)
+    # cat(sprintf("Cox Model trained in %.2f seconds.\n", cox_time))
     
     # # 6. Random Forest
     # cat("Training Random Forest...\n")
@@ -175,7 +188,9 @@ simu <- function(seed, setting,
     # cat(sprintf("Random Forest trained in %.2f seconds.\n", rf_time))
     
     # RETURN MDL0 so CAMS can use it!
-    return(list(output = output, times = times, mdl0 = mdl0))
+    # return(list(output = output, times = times, mdl0 = mdl0))
+
+    return(mdl0)
   }
   
   ########################################
@@ -194,26 +209,26 @@ simu <- function(seed, setting,
   ########################################
   ## APPROACH 2: Subgroup Modeling
   ########################################
-  cat("========== Executing Approach 2: Subgroup X1 = 0 ==========\n")
-  res_0 <- run_pipeline(data_fit[data_fit$X1 == 0, , drop=FALSE],
-                        data_calib[data_calib$X1 == 0, , drop=FALSE],
-                        data_test[data_test$X1 == 0, , drop=FALSE],
-                        data[data$X1 == 0, , drop=FALSE],
-                        xnames_sub, alpha, seed, mod)
+  # cat("========== Executing Approach 2: Subgroup X1 = 0 ==========\n")
+  # res_0 <- run_pipeline(data_fit[data_fit$X1 == 0, , drop=FALSE],
+  #                       data_calib[data_calib$X1 == 0, , drop=FALSE],
+  #                       data_test[data_test$X1 == 0, , drop=FALSE],
+  #                       data[data$X1 == 0, , drop=FALSE],
+  #                       xnames_sub, alpha, seed, mod)
                                  
-  cat("========== Executing Approach 2: Subgroup X1 = 1 ==========\n")
-  res_1 <- run_pipeline(data_fit[data_fit$X1 == 1, , drop=FALSE],
-                        data_calib[data_calib$X1 == 1, , drop=FALSE],
-                        data_test[data_test$X1 == 1, , drop=FALSE],
-                        data[data$X1 == 1, , drop=FALSE],
-                        xnames_sub, alpha, seed, mod)
+  # cat("========== Executing Approach 2: Subgroup X1 = 1 ==========\n")
+  # res_1 <- run_pipeline(data_fit[data_fit$X1 == 1, , drop=FALSE],
+  #                       data_calib[data_calib$X1 == 1, , drop=FALSE],
+  #                       data_test[data_test$X1 == 1, , drop=FALSE],
+  #                       data[data$X1 == 1, , drop=FALSE],
+  #                       xnames_sub, alpha, seed, mod)
   
   # Merge subgroup outputs to map exactly to the data_test row order
-  output_subgroup <- data.frame(matrix(ncol = ncol(res_0$output), nrow = nrow(data_test)))
-  colnames(output_subgroup) <- colnames(res_0$output)
-  output_subgroup[idx_test_0, ] <- res_0$output
-  output_subgroup[idx_test_1, ] <- res_1$output
-  times_subgroup <- res_0$times + res_1$times
+  # output_subgroup <- data.frame(matrix(ncol = ncol(res_0$output), nrow = nrow(data_test)))
+  # colnames(output_subgroup) <- colnames(res_0$output)
+  # output_subgroup[idx_test_0, ] <- res_0$output
+  # output_subgroup[idx_test_1, ] <- res_1$output
+  # times_subgroup <- res_0$times + res_1$times
 
   ########################################
   ## APPROACH 3: CAMS
@@ -228,7 +243,7 @@ simu <- function(seed, setting,
                    time = data$censored_T,
                    alpha = alpha,
                    p = length(xnames),
-                   mdl0 = res_joint$mdl0)  # Borrowing the GPR trained in Joint
+                   mdl0 = res_joint)  # Borrowing the GPR trained in Joint
                    
   time_cams <- proc.time()[3] - start_time_cams
   cat(sprintf("CAMS trained in %.2f seconds.\n", time_cams))
@@ -284,11 +299,12 @@ simu <- function(seed, setting,
   ########################################
   ## Compute & Bind Final Results
   ########################################
-  df_joint <- compute_metrics(res_joint$output, res_joint$times, "(Joint)")
-  df_subgroup <- compute_metrics(output_subgroup, times_subgroup, "(Subgroup)")
+  # df_joint <- compute_metrics(res_joint$output, res_joint$times, "(Joint)")
+  # df_subgroup <- compute_metrics(output_subgroup, times_subgroup, "(Subgroup)")
   
-  # Append CAMS to the final CSV output
-  simu_out <- rbind(df_cams,  df_subgroup, df_joint)
+  # # Append CAMS to the final CSV output
+  # simu_out <- rbind(df_cams,  df_subgroup, df_joint)
+  simu_out <- rbind(df_cams)
   rownames(simu_out) <- NULL
   
   return(simu_out)
