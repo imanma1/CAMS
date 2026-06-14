@@ -3,7 +3,7 @@
 model_generating_fun <- function(n_train, n_calib, n_test,
                                  setting, xmin, xmax){
 
-  bernoulli_prob <- 0.3
+  bernoulli_prob <- 0.1
   
   # =====================================================================
   # 1. DEFINE SETTING FORMULAS AND DIMENSIONS
@@ -60,6 +60,19 @@ model_generating_fun <- function(n_train, n_calib, n_test,
     gen_c <- function(x) exp(2.5 + (x[,3]^2) - 1.5 * x[,1] + 
                                0.1 * rowSums(abs(x[, 4:10, drop=FALSE])) + 0.5 * rnorm(nrow(x)))
                                
+  } else if (setting == "complex_surv") {
+    # Setting: Complex nonlinear survival with homogeneous censoring (10 Variables)
+    p <- 10
+    # T = exp(2 - 1.5*X1 + 0.5*X2^2 + 0.3*X3*X4 + 0.1*sum(X5:X10) + 0.5*eps)
+    gen_t <- function(x) {
+      exp(2 - 1.5 * x[,1] + 0.5 * (x[,2]^2) + 0.3 * x[,3] * x[,4] + 
+          0.1 * rowSums(x[, 5:10, drop=FALSE]) + 0.5 * rnorm(nrow(x)))
+    }
+    
+    # C = exp(3.0 + 0.5*eps)
+    gen_c <- function(x) {
+      exp(3.0 + 0.5 * rnorm(nrow(x)))
+    }
   } else {
     stop(sprintf("Unknown setting: %s", setting))
   }

@@ -1,16 +1,16 @@
 make_plots <- function() {
   # 1. Define Parameters
   # ---------------------------------------------------------
-  results_dir <- "../old_results"
+  results_dir <- "../results"
   plots_dir <- file.path("..", "plots")
   num_runs <- 50             # The number of seed folders to loop through
   target_alpha <- 0.1          # Miscoverage target
   target_cov <- 1 - target_alpha
 
   # List of all settings used in the simulations
-  setting_list <- c("homo_cens", "cov_cens", "prot_cens", 
-                    "heavy_prot_cens", "heavy_inter_cens", 
-                    "surv_misspec", "cens_misspec", "simul_misspec")
+  setting_list <- c("homo_cens", "cov_cens", "prot_cens",
+                    "heavy_prot_cens", "heavy_inter_cens",
+                    "surv_misspec", "cens_misspec", "simul_misspec", "complex_surv")
 
   # Create the plots directory if it doesn't exist
   dir.create(plots_dir, showWarnings = FALSE, recursive = TRUE)
@@ -45,6 +45,8 @@ make_plots <- function() {
 
   # 3. Loop Through All Settings
   # ---------------------------------------------------------
+  j <- 1
+
   for (setting in setting_list) {
     cat(sprintf("Processing setting: %s...\n", setting))
     
@@ -87,7 +89,7 @@ make_plots <- function() {
     
     # 4. Generate the 6 Plots for the Current Setting as a PNG Image
     # ---------------------------------------------------------
-    png_name <- file.path(plots_dir, sprintf("%s_results_plots.png", setting))
+    png_name <- file.path(plots_dir, sprintf("%d. %s.png", j, setting))
     
     # Open high-resolution PNG device (300 DPI is standard for publication)
     png(png_name, width = 15, height = 11, units = "in", res = 300) 
@@ -138,9 +140,8 @@ make_plots <- function() {
 
     dev.off() # Close the PNG writer
     cat(sprintf("  -> Plot saved to: %s\n", png_name))
+    j <- j + 1
   }
 
   cat("All settings processed successfully!\n")
 }
-
-make_plots()

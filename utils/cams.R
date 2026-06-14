@@ -1,6 +1,6 @@
 cams <- function(x, Xtrain, C, event, time, alpha = 0.1, p, mdl0) {
 
-  if(is.null(dim(x)[1])){
+  if(is.null(dim(x)[1])) {
     len_x <- length(x)
     p <- 1
   } else {
@@ -29,8 +29,6 @@ cams <- function(x, Xtrain, C, event, time, alpha = 0.1, p, mdl0) {
   # The truncation level eta for the IPCW weights
   eta = 1/log(n)
   
-  start_time = proc.time()[3]
-
   lower_bnd0 <- est_alpha_ipcw(mdl,
                                newdata[newdata$X1 == 0, , drop=FALSE], 
                                data_calib[data_calib$X1 == 0, , drop=FALSE],
@@ -41,8 +39,6 @@ cams <- function(x, Xtrain, C, event, time, alpha = 0.1, p, mdl0) {
                                data_calib[data_calib$X1 == 1, , drop=FALSE],
                                xnames, alpha, len_x, mdl0, eta)
                                
-  end_time <- proc.time()[3]
-  cat(sprintf("est_alpha_ipcw in %.2f seconds.\n", end_time - start_time))
 
   idx_test_0 <- newdata$X1 == 0
   idx_test_1 <- newdata$X1 == 1
@@ -73,7 +69,8 @@ est_alpha_ipcw <- function(mdl, newdata, data_calib, xnames, alpha, len_x, mdl0,
   calib_x <- data_calib[,names(data_calib) %in% xnames, drop=FALSE]
   n_calib_subgroup <- nrow(data_calib)
 
-  pr_calib <- pnorm((gpr_mean - data_calib$censored_T) / gpr_sd)
+  # Calculate P(-C <= -t)
+  pr_calib <- pnorm((-data_calib$censored_T - gpr_mean) / gpr_sd)
   pr_calib <- pmax(pr_calib, eta)
   weight_calib <- 1 / pr_calib
   n_eff <- (n_calib_subgroup^2) / sum(weight_calib^2)
@@ -95,9 +92,9 @@ est_alpha_ipcw <- function(mdl, newdata, data_calib, xnames, alpha, len_x, mdl0,
     
     # Prevent division by zero if total_weight is incredibly small
     if(total_weight == 0) {
-      risk_empirical <- 1 
+      risk_empirical <- 1
     } else {
-      risk_empirical <- sum_num / total_weight 
+      risk_empirical <- sum_num / total_weight
     }
     
     # FIX 2: Reintroduce a Gentle Penalty Buffer

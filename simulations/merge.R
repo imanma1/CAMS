@@ -1,6 +1,7 @@
 merge <- function() {
+  dir_final_results <- "../results"
   dir_results <- "../old_results"
-  dir_results0 <- "../results"
+  dir_results0 <- "../new_results"
 
   # Iterate through the subfolders 1 to 50
   for (folder_num in 1:50) {
@@ -8,6 +9,7 @@ merge <- function() {
     # Construct paths for the current subfolder
     current_res_dir <- file.path(dir_results, as.character(folder_num))
     current_res0_dir <- file.path(dir_results0, as.character(folder_num))
+    current_final_dir <- file.path(dir_final_results, as.character(folder_num))
     
     # List all CSV files in the current results folder
     csv_files <- list.files(current_res_dir, pattern = "\\.csv$", full.names = FALSE)
@@ -16,6 +18,7 @@ merge <- function() {
       # Construct full file paths
       path_res <- file.path(current_res_dir, file_name)
       path_res0 <- file.path(current_res0_dir, file_name)
+      path_final_res <- file.path(current_final_dir, file_name)
       
       # Check if the corresponding file actually exists in results0
       if (file.exists(path_res0)) {
@@ -54,8 +57,8 @@ merge <- function() {
           # Re-index the first column so the numbering remains sequential and clean
           df_res[[1]] <- 1:nrow(df_res)
           
-          # Overwrite the original file in the 'results' folder with the updated data
-          write.csv(df_res, path_res, row.names = FALSE)
+          dir.create(current_final_dir, showWarnings = FALSE, recursive = TRUE)
+          write.csv(df_res, path_final_res, row.names = FALSE)
         }
       }
     }
@@ -63,5 +66,3 @@ merge <- function() {
 
   print("Merge complete.")
 }
-
-merge()

@@ -1,3 +1,4 @@
+total_start_time <- proc.time()[3]
 ########################################
 ## Process the input argument
 ########################################
@@ -25,6 +26,7 @@ source("./model_script.R")
 source("./simu.R")
 source("./merge.R")
 source("./fig.R")
+source("./cams_simu.R")
 
 ########################################
 ### run simulations
@@ -33,7 +35,7 @@ source("./fig.R")
 ########################################
 setting_list = c("homo_cens", "cov_cens", "prot_cens", 
                  "heavy_prot_cens", "heavy_inter_cens", 
-                 "surv_misspec", "cens_misspec", "simul_misspec")
+                 "surv_misspec", "cens_misspec", "simul_misspec", "complex_surv")
 
 alpha <- .1    # target level 1-alpha
 n <- 1000
@@ -43,7 +45,7 @@ n_calib <- n
 xmin <- -2
 xmax <- 2
 
-num_runs <- 5
+num_runs <- 50
 
 # Detect cores just to print a helpful message (the actual multithreading happens inside the utils scripts)
 slurm_cores <- as.numeric(Sys.getenv("SLURM_CPUS_PER_TASK"))
@@ -79,5 +81,7 @@ for(i in 1:num_runs){
   cat(sprintf("\nCompleted run %d/%d in %.2f seconds.\n", i, num_runs, proc.time()[3] - run_start_time))
 }
 
-merge()
+#merge()
 make_plots()
+
+cat(sprintf("\nCompleted in %.2f seconds.\n", proc.time()[3] - total_start_time))
