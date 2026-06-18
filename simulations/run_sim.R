@@ -3,8 +3,15 @@ total_start_time <- proc.time()[3]
 ## Process the input argument
 ########################################
 args <- commandArgs(trailingOnly = TRUE)
-seed<- as.integer(args[1])
-if(is.na(seed)){seed <- 1}
+setting_list <- unlist(strsplit(args[1], ","))
+seed <- as.integer(args[2])
+if (is.na(seed)) {
+  seed <- 1
+}
+only_cams <- as.logical(as.integer(args[3]))
+if (is.na(only_cams)) {
+  only_cams <- FALSE
+}
 
 ########################################
 ## load libraries
@@ -26,16 +33,14 @@ source("./model_script.R")
 source("./simu.R")
 source("./merge.R")
 source("./fig.R")
-source("./cams_simu.R")
 
 ########################################
 ### run simulations
 ########################################
 ## configurations
 ########################################
-setting_list = c("homo_cens", "cov_cens", "prot_cens", 
-                 "heavy_prot_cens", "heavy_inter_cens", 
-                 "surv_misspec", "cens_misspec", "simul_misspec", "complex_surv")
+
+# setting_list <- c("starve_hetero_high_dim")
 
 alpha <- .1    # target level 1-alpha
 n <- 1000
@@ -45,7 +50,7 @@ n_calib <- n
 xmin <- -2
 xmax <- 2
 
-num_runs <- 50
+num_runs <- 1
 
 # Detect cores just to print a helpful message (the actual multithreading happens inside the utils scripts)
 slurm_cores <- as.numeric(Sys.getenv("SLURM_CPUS_PER_TASK"))
@@ -55,12 +60,16 @@ cat(sprintf("Starting sequential outer loop. Inner algorithms will utilize %d co
 ########################################
 ### SEQUENTIAL LOOP (Letting inner functions multithread)
 ########################################
-for(i in 1:num_runs){
+for (i in 1:num_runs) {
   # Update the seed for each run
-  current_seed <- current_seed <- seed + (i - 1)
+  current_seed <- seed + (i - 1)
   
   # Create a separate folder named with the run number inside the 'results' folder
-  run_folder <- sprintf("../results/%d", current_seed)
+  if (only_cams){
+    run_folder <- sprintf("../new_results/%d", current_seed)
+  } else {
+     run_folder <- sprintf("../results/%d", current_seed)
+  }
   dir.create(run_folder, showWarnings = FALSE, recursive = TRUE)
   run_start_time <- proc.time()[3]
   for(setting in setting_list){
@@ -68,7 +77,7 @@ for(i in 1:num_runs){
     
     start_time <- proc.time()[3]
     # Run the simulation
-    simures <- simu(current_seed + 1234, setting,
+    simures <- simu(current_seed + 1234, setting, only_cams,
                     n_train, n_calib, n_test,
                     xmin, xmax, alpha)
     cat(sprintf("%s for run %d: %.2f seconds.\n", setting, i, proc.time()[3] - start_time))
@@ -81,7 +90,9 @@ for(i in 1:num_runs){
   cat(sprintf("\nCompleted run %d/%d in %.2f seconds.\n", i, num_runs, proc.time()[3] - run_start_time))
 }
 
-#merge()
-make_plots()
+if (only_cams) {
+  merge()
+}
+make_plots(setting_list)
 
 cat(sprintf("\nCompleted in %.2f seconds.\n", proc.time()[3] - total_start_time))

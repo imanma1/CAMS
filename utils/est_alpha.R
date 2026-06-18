@@ -81,8 +81,12 @@ alpha_qct <- function(mdl, qc_mdl, newdata, data_fit, data_calib, xnames, alpha,
   
   calib_x <- data_calib[,names(data_calib) %in% xnames, drop=FALSE]
 
+  # === OPTIMIZATION 2: PRE-COMPUTE RF FOR CALIBRATION ===
+  calib_qc_preds <- predict(qc_mdl, calib_x, cens_rt)$predictions[,1]
+
   est_alpha_qct_fast <- function(v) {
-    lv_calib <- lv_qct(mdl, qc_mdl, calib_x, v, alpha, cens_rt)
+    # Pass the pre-computed calib_qc_preds array instead of cens_rt
+    lv_calib <- lv_qct(mdl, calib_x, v, alpha, calib_qc_preds)
     pr_calib <- pnorm((-lv_calib - gpr_mean) / gpr_sd)
     weight_calib <- 1 / pr_calib
     
@@ -103,7 +107,6 @@ alpha_qct <- function(mdl, qc_mdl, newdata, data_fit, data_calib, xnames, alpha,
     n_threads <- ifelse(is.na(slurm_cores), detectCores(), slurm_cores)
   }
 
-  # Use mclapply to evaluate the thresholds across cores.
   alpha_v_list <- unlist(mclapply(v_list, est_alpha_qct_fast, mc.cores = n_threads))
   
   # monotonize alpha
@@ -114,11 +117,15 @@ alpha_qct <- function(mdl, qc_mdl, newdata, data_fit, data_calib, xnames, alpha,
     v_hat_l <- min(v_list[alpha_v <= alpha])
   }
   
-  # === OPTIMIZATION 2: VECTORIZE PREDICTION ===
+  # === OPTIMIZATION 4: PRE-COMPUTE RF FOR TEST DATA ===
   if (is.null(v_hat_l)) {
     lower_bnd_l <- rep(0, len_x)
   } else {
-    lower_bnd_l <- as.numeric(lv_qct(mdl, qc_mdl, newdata, v_hat_l, alpha, cens_rt))
+    newdata_x <- newdata[, names(newdata) %in% xnames, drop=FALSE]
+    newdata_qc_preds <- predict(qc_mdl, newdata_x, cens_rt)$predictions[,1]
+    
+    # Pass the pre-computed test predictions
+    lower_bnd_l <- as.numeric(lv_qct(mdl, newdata, v_hat_l, alpha, newdata_qc_preds))
     
     # Safety net: If the function somehow still returns a scalar, expand it
     if (length(lower_bnd_l) == 1) {
@@ -141,14 +148,12 @@ lv_qt <- function(mdl, calib_x, v, alpha, cens_rt){
   return(lv2_calib)
 }
 
-lv_qct <- function(mdl, qc_mdl, calib_x, v, alpha, cens_rt){
-  if(length(v)==0){
-    return(lv_calib = 0)
+lv_qct <- function(mdl, calib_x, v, alpha, qc_val){
+  if(length(v) == 0){
+    return(0)
   }
-  lv1_calib <- predict(qc_mdl, calib_x, cens_rt)
-  lv2_calib <- predict(mdl, newdata = calib_x, type = "quantile", p = 1-v)
-  lv1_calib <- (lv1_calib$predictions)[,1]
-  lv_calib = pmin(lv1_calib, lv2_calib)
+  lv1_calib <- predict(mdl, newdata = calib_x, type = "quantile", p = 1-v)
+  lv_calib = pmin(lv1_calib, qc_val)
   return(lv_calib)
 }
 
@@ -237,29 +242,35 @@ v_pts_qct = function(mdl, qc_mdl,
                      xnames, alpha, cens_rt){
   
   library(parallel)
-# Check if the operating system is Windows
   if (.Platform$OS.type == "windows") {
-    n_threads <- 1  # Windows doesn't support mclapply, force sequential for local testing
+    n_threads <- 1
   } else {
-    # If on Linux/HPC, detect SLURM cores or use all available hardware cores
     slurm_cores <- as.numeric(Sys.getenv("SLURM_CPUS_PER_TASK"))
     n_threads <- ifelse(is.na(slurm_cores), detectCores(), slurm_cores)
   }
+
+  calib_x_full = data_calib[, names(data_calib) %in% xnames, drop=FALSE]
+  names(calib_x_full) = xnames
+  qc_preds <- predict(qc_mdl, calib_x_full, cens_rt)$predictions[,1]
   
   # Process all rows in parallel
   res_list <- mclapply(1:nrow(data_calib), function(i_calib) {
-    # Initialize a vector for this specific row
     pts_row <- c(0, 0)
     
     calib_x = data_calib[i_calib, names(data_calib) %in% xnames, drop=FALSE]
     names(calib_x) = xnames
     
-    lv = function(v) lv_qct(mdl, qc_mdl, calib_x, v, alpha, cens_rt)
+    # Call the simplified lv_qct
+    lv = function(v) lv_qct(mdl, calib_x, v, alpha, qc_preds[i_calib])
+    
     x0 = 0.02
     x1 = 0.95
     upb = lv(x0)
     lwb = lv(x1)
-    lv_inv = inverse(function(v) lv_qct(mdl, qc_mdl, calib_x, v, alpha, cens_rt), x0, x1)
+    
+    # FIX: Just pass 'lv' directly into inverse! 
+    # This prevents the root finder from calling the Random Forest again.
+    lv_inv = inverse(lv, x0, x1)
     
     if(data_calib$event[i_calib]==0){
       if(data_calib$C[i_calib] >= upb){

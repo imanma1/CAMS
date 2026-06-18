@@ -67,8 +67,15 @@ cox0_based <- function(x,c,alpha,
     calib_term <- sapply(X=weight_new,get_calibration,score=score,
                         weight_calib=weight_calib,alpha=alpha)
     ## obtain final confidence interval
-    lower_bnd <- pmin(new_quant,c)-calib_term
+    if (nrow(data_calib) == 0) {
+      # If there is no calibration data, fallback to the uncalibrated prediction
+      # or return a safe default like 0
+      lower_bnd <- new_quant 
+    } else {
+      # Proceed with normal calibration math
+      lower_bnd <- pmin(new_quant, c) - calib_term
     }
+  }
 
   if(type == "percentile"){
     ## Fit the model for S(y)=p(min(T,c)>=y|X)

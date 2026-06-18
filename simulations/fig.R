@@ -1,4 +1,4 @@
-make_plots <- function() {
+make_plots <- function(setting_list) {
   # 1. Define Parameters
   # ---------------------------------------------------------
   results_dir <- "../results"
@@ -6,11 +6,6 @@ make_plots <- function() {
   num_runs <- 50             # The number of seed folders to loop through
   target_alpha <- 0.1          # Miscoverage target
   target_cov <- 1 - target_alpha
-
-  # List of all settings used in the simulations
-  setting_list <- c("homo_cens", "cov_cens", "prot_cens",
-                    "heavy_prot_cens", "heavy_inter_cens",
-                    "surv_misspec", "cens_misspec", "simul_misspec", "complex_surv")
 
   # Create the plots directory if it doesn't exist
   dir.create(plots_dir, showWarnings = FALSE, recursive = TRUE)
@@ -81,10 +76,10 @@ make_plots <- function() {
     }
     
     # Ensure the methods plot in the correct order for the new data format
-    method_order <- c("New CAMS", "CAMS", "DFT-adaptive-T (Joint)", "DFT-adaptive-CT (Joint)", "DFT-fixed (Joint)", 
-                      "Vanilla CQR (Joint)", "Cox (Joint)",
+    method_order <- c("CAMS", "DFT-adaptive-T (Joint)", "DFT-adaptive-CT (Joint)", "DFT-fixed (Joint)", 
+                      "Vanilla CQR (Joint)",
                       "DFT-adaptive-T (Subgroup)", "DFT-adaptive-CT (Subgroup)", "DFT-fixed (Subgroup)", 
-                      "Vanilla CQR (Subgroup)", "Cox (Subgroup)")
+                      "Vanilla CQR (Subgroup)")
     all_data$method <- factor(all_data$method, levels = method_order)
     
     # 4. Generate the 6 Plots for the Current Setting as a PNG Image
@@ -145,3 +140,5 @@ make_plots <- function() {
 
   cat("All settings processed successfully!\n")
 }
+
+#make_plots()

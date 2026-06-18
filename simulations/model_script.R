@@ -73,6 +73,53 @@ model_generating_fun <- function(n_train, n_calib, n_test,
     gen_c <- function(x) {
       exp(3.0 + 0.5 * rnorm(nrow(x)))
     }
+  } else if (setting == "var_shift_heavy_cens") {
+    # Setting: Variance Shift + Heavy Censoring (10 Variables)
+    p <- 10
+    
+    # T = exp(2 + 0.5*X2 - 1.0*X1 + (0.5 + 0.8*X1)*eps_T)
+    gen_t <- function(x) {
+      exp(2 + 0.5 * x[,2] - 1.0 * x[,1] + 
+         (0.5 + 0.8 * x[,1]) * rnorm(nrow(x)))
+    }
+    
+    # C = exp(3.0 + 0.5*X2 - 2.8*X1 + 0.5*eps_C)
+    gen_c <- function(x) {
+      exp(3.0 + 0.5 * x[,2] - 2.8 * x[,1] + 
+          0.5 * rnorm(nrow(x)))
+    }
+  } else if (setting == "starve_hetero") {
+    # Setting: Starvation + Heteroscedasticity (15 Variables)
+    p <- 15
+    
+    # T = exp(2 - 1.5*X1 + sin(X2*X3) + 0.5*X4^2 + 0.2*sum(X5:X15) + (0.5 + 0.8*X1)*eps_T)
+    gen_t <- function(x) {
+      exp(2 - 1.5 * x[,1] + sin(x[,2] * x[,3]) + 0.5 * (x[,4]^2) + 
+          0.2 * rowSums(x[, 5:15, drop=FALSE]) + 
+          (0.5 + 0.8 * x[,1]) * rnorm(nrow(x)))
+    }
+    
+    # C = exp(3.0 - 1.5*X1 + 0.5*eps_C)
+    gen_c <- function(x) {
+      exp(3.0 - 1.5 * x[,1] + 0.5 * rnorm(nrow(x)))
+    }
+  
+  } else if (setting == "starve_hetero_high_dim") {
+    # Setting: Starvation + Heteroscedasticity (75 Variables)
+    p <- 75
+    
+    # T = exp(2 - 1.5*X1 + 0.1*sum(X2:X75) + (0.5 + 0.8*X1)*eps_T)
+    gen_t <- function(x) {
+      exp(2 - 1.5 * x[,1] + 
+          0.1 * rowSums(x[, 2:75, drop=FALSE]) + 
+          (0.5 + 0.8 * x[,1]) * rnorm(nrow(x)))
+    }
+    
+    # C = exp(3.0 - 1.5*X1 + 0.5*eps_C)
+    gen_c <- function(x) {
+      exp(3.0 - 1.5 * x[,1] + 0.5 * rnorm(nrow(x)))
+    }
+  
   } else {
     stop(sprintf("Unknown setting: %s", setting))
   }

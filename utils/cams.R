@@ -84,7 +84,7 @@ est_alpha_ipcw <- function(mdl, newdata, data_calib, xnames, alpha, len_x, mdl0,
   total_weight <- sum(weight_calib[data_calib$event == 1])
   
   est_alpha <- function(v) {
-    lv_calib <- lv(mdl, calib_x, v)
+    lv_calib <- lv_cams(mdl, calib_x, v)
     ind = (data_calib$censored_T < lv_calib) & (data_calib$event == 1)
     
     # FIX 1: Hajek Self-Normalization
@@ -118,7 +118,7 @@ est_alpha_ipcw <- function(mdl, newdata, data_calib, xnames, alpha, len_x, mdl0,
   if (is.null(v_hat_l)) {
     lower_bnd_l <- rep(0, len_x)
   } else {
-    lower_bnd_l <- as.numeric(lv(mdl, newdata, v_hat_l))
+    lower_bnd_l <- as.numeric(lv_cams(mdl, newdata, v_hat_l))
     if (length(lower_bnd_l) == 1) {
       lower_bnd_l <- rep(lower_bnd_l, len_x)
     }
@@ -129,7 +129,7 @@ est_alpha_ipcw <- function(mdl, newdata, data_calib, xnames, alpha, len_x, mdl0,
 # ==========================================
 # Core Helper Functions
 # ==========================================
-lv <- function(mdl, calib_x, v){
+lv_cams <- function(mdl, calib_x, v){
   if(length(v) == 0) {
     return(rep(0, times = nrow(calib_x)))
   }
