@@ -129,7 +129,12 @@ simu <- function(seed, setting, only_cams = FALSE,
       cat(sprintf("cfsurv (qc0) trained in %.2f seconds.\n", raw_time_qc0))
       time_qc0 <- raw_time_qc0 + time_mdl0
       times <- c(times, time_qc0)
-      output$qc0 <- res0$res
+      if (length(res0$res) == 0) {
+        cat("  -> [WARNING] cfsurv returned empty predictions. Filling with NAs.\n")
+        output$qc0 <- rep(NA, nrow(output))
+      } else {
+        output$qc0 <- res0$res
+      }
       
       # 4. vanilla CQR
       cat("Training vanilla CQR...\n")
