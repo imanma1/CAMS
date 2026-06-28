@@ -38,20 +38,19 @@
 #' @export
 
 # function to construct conformal confidence interval
-cfsurv <- function(x,c_list=NULL,
-                   pr_list=NULL,
-                   pr_new_list=NULL,
-                   Xtrain,C,event,time,
-                   alpha=0.05,
-                   type="quantile",
-                   #seed = 24601,
+cfsurv <- function(x, p, len_x, xnames,
+                   data_fit, data_calib, n,
+                   alpha = 0.05,
+                   type = "quantile",
                    model = "cox",
-                   dist= "weibull",
-                   I_fit = NULL,
-                   ftol=.1,tol=.1,
-                   n.tree=100,
-                   mdl0
-                   ){
+                   dist = "weibull",
+                   c_list = NULL,
+                   pr_list = NULL,
+                   pr_new_list = NULL,
+                   ftol = 0.1,
+                   tol = 0.1,
+                   n_tree = 100,
+                   mdl0) {
   ## Check if the required packages are installed
   ## Solution found from https://stackoverflow.com/questions/4090169/elegant-way-to-check-for-missing-packages-and-install-them
   list.of.packages <- c("ggplot2",
@@ -70,205 +69,77 @@ cfsurv <- function(x,c_list=NULL,
   new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
   if(length(new.packages)) install.packages(new.packages, repos='http://cran.us.r-project.org')
   suppressPackageStartupMessages(res <- lapply(X=list.of.packages,FUN=require,character.only=TRUE))
-  ## Process the input
-  ## Check the length of x and c: only two cases are supported. length(r)=1, or length(r)=length(x)
-  X <- Xtrain
-  if(is.null(dim(x)[1])){
-    len_x <- length(x)
-    p <- 1
-  }else{
-    len_x <- dim(x)[1]
-    p <- dim(x)[2]
-  }
-  
-  
-  if(is.null(dim(X)[1])){
-    n <- length(X)
-    pX <- 1
-  }else{
-    n <- dim(X)[1]
-    pX <- dim(X)[2]
-  }
-  
-
-  ## Check the type of the model. Only "cox" and "randomforest" are supported
-  if(model %in% c("cox","randomforest","pow","portnoy","PengHuang",
-                  "distBoost","gpr", "quantBoost")==0) 
-    stop("The regression model is not supported.")
-
-  ## Check the type of the confidence inteval
-  if(type %in% c("quantile","percentile")==0) stop("The type of confidence interval is not supported.")
-
-  ## Check the value of alpha
-  if (alpha>=1 | alpha<=0) stop("The value of alpha is out of bound.")
-
-  ## Check the dimensions of the data 
-  xnames <- paste0('X', 1:p)
-  if(n != length(C))stop("The number of rows in X does not match the length of R.")
-  if(length(C) != length(event))stop("The length of R does not match the length of event.")
-  if(length(event) != length(time))stop("The length of event does not match the length of time.")
-  if(p != pX) stop("The dimension of the test point does not match the dimension of the training point.")
-
-  data <- as.data.frame(cbind(C,event,time,X))
-  colnames(data) <- c("C","event","censored_T",xnames)
-
-  ## set random seed
-  # set.seed(seed)
 
   ## Split the data into the training set and the calibration set
-  n = dim(data)[1]
-  n_train = n/2
-  n_calib = n-n_train
-  if(is.null(I_fit)){
-    I_fit <- sample(1:n,n_train,replace = FALSE)
-  }
-  data_fit <- data[I_fit,]
-  data_calib <- data[-I_fit,]
   newdata <- data.frame(x)
   colnames(newdata) <- xnames
-  
-  ## If c is not specified, select c automatically 
-  if(is.null(c_list)){
-    ref_length <- 100
-    c_list <- seq(min(data_fit$C),max(data_fit$C),length=ref_length)
+
+  ## If c is not specified, select c automatically
+  if (!is.null(pr_list) || !is.null(pr_new_list)) {
+    stop("Precomputed pr_list/pr_new_list are not supported in the refactored split-explicit version.")
   }
-  
-  if(length(c_list)==1){
+
+  if (is.null(c_list)) {
+    ref_length <- 100
+    c_list <- seq(min(data_fit$C), max(data_fit$C), length = ref_length)
+  }
+
+  if (length(c_list) == 1) {
     c <- c_list
-    if(is.null(pr_list) | is.null(pr_new_list)){
-      res <- cox_censoring_prob(mdl0, data_calib, newdata, xnames, c, ftol, tol)
-      pr_calib <- res$pr_calib
-      pr_new <- res$pr_new
-    }else{
-      pr_calib <- pr_list[-I_fit]
-      pr_new <- pr_new_list
-    }
-  }else{
-    if(is.null(pr_list) | is.null(pr_new_list)){
-      res <- selection_c(X=data_fit[,colnames(data_fit)%in%xnames],
-                         C=data_fit$C,
-                         event=data_fit$event,
-                         time=data_fit$censored_T,
-                         weight_ref=NULL,
-                         alpha,c_ref=c_list,
-                         type=type,dist=dist, mdl0=mdl0) # <--- PASS mdl0
-      c <- res$c_opt
-      res <- cox_censoring_prob(mdl0, data_calib, newdata, xnames, c, ftol, tol)
-      pr_calib <- res$pr_calib
-      pr_new <- res$pr_new
-    }else{
-      weight_ref <- 1/pr_list[I_fit,]
-      res <- selection_c(X=data_fit[,colnames(data_fit)%in%xnames],
-                         C=data_fit$C,
-                         event=data_fit$event,
-                         time=data_fit$censored_T,
-                         alpha,c_ref=c_list,
-                         weight_ref=weight_ref,
-                         type=type,dist=dist, mdl0=mdl0) # <--- PASS mdl0
-      c <- res$c_opt
-      pr_calib <- pr_list[-I_fit,c_list==c] 
-      pr_new <- pr_new_list[,c_list==c]
-    }
+    res <- cox_censoring_prob(mdl0, data_calib, newdata, xnames, c, ftol, tol)
+    pr_calib <- res$pr_calib
+    pr_new <- res$pr_new
+  } else {
+    res <- selection_c(data_fit, p, nrow(data_fit), xnames,
+                       c_ref = c_list, weight_ref = NULL,
+                       model = model, type = type, dist = dist,
+                       mdl0 = mdl0, alpha = alpha)
+    c <- res$c_opt
+    res <- cox_censoring_prob(mdl0, data_calib, newdata, xnames, c, ftol, tol)
+    pr_calib <- res$pr_calib
+    pr_new <- res$pr_new
   }
 
   ## Computing the weight for the calibration data and the test data
-  weight_calib <- 1/pr_calib
-  weight_new <- 1/pr_new
- 
+  weight_calib <- 1 / pr_calib
+  weight_new <- 1 / pr_new
+
   ## Run the main function and gather resutls
-  if(model == "distBoost"){
-    res = distBoost0_based(x,c,alpha,
-                    data_fit,
-                    data_calib,
-                    weight_calib,
-                    weight_new,
-                    n.tree)
-   }
+  res <- cox0_based(x, p, len_x, xnames,
+                  c, alpha,
+                  data_fit,
+                  data_calib,
+                  type,
+                  dist,
+                  weight_calib,
+                  weight_new,
+                  ftol,
+                  tol)
 
-  if(model == "quantBoost"){
-    res = quantBoost_based(x,c,alpha,
-                    data_fit,
-                    data_calib,
-                    weight_calib,
-                    weight_new,
-                    n.tree) 
-  }
-
-  if(model == "gpr"){
-    res = gpr0_based(x,c,alpha,
-                    data_fit,
-                    data_calib,
-                    weight_calib,
-                    weight_new)
-   }
-  
-  if(model == "cox"){
-    res = cox0_based(x,c,alpha,
-                    data_fit,
-                    data_calib,
-                    type,
-                    dist,
-                    weight_calib,
-                    weight_new,
-                    ftol,
-                    tol)
-   }
-  
-  if(model == "randomforest"){
-    res = rf0_based(x,c,alpha,
-                   data_fit,
-                   data_calib,
-                   weight_calib,
-                   weight_new)
-  }
-  
-  if(model == "pow"){
-    res = pow_based(x,c,alpha,
-                   data_fit,
-                   data_calib,
-                   weight_calib,
-                   weight_new)
-  }
-  if(model == "portnoy"){
-    res = portnoy_based(x,c,alpha,
-                   data_fit,
-                   data_calib,
-                   weight_calib,
-                   weight_new)
-  }
-  if(model == "PengHuang"){
-    res = ph_based(x,c,alpha,
-                   data_fit,
-                   data_calib,
-                   weight_calib,
-                   weight_new)
-  }
-  return(list(res=res,
-              c=c))
+  return (list(res = res, c = c))
 
 }
 
-cox_censoring_prob <- function(gpr_mdl, calib, test=NULL,
-                      xnames, c,
-                      ftol=.1, tol=.1){
-    p <- length(xnames)
+cox_censoring_prob <- function(gpr_mdl, calib, test = NULL,
+                               xnames, c,
+                               ftol = .1, tol = .1) {
+  p <- length(xnames)
 
-    ## Computing the censoring scores for the calibration data
-    mean_calib <- gpr_mdl$predict(as.matrix(calib[,names(calib) %in% xnames]))
-    sd_calib <- gpr_mdl$predict(as.matrix(calib[,names(calib) %in% xnames]),
-                              se.fit = TRUE)$se
+  ## Computing the censoring scores for the calibration data
+  mean_calib <- gpr_mdl$predict(as.matrix(calib[, xnames, drop = FALSE]))
+  sd_calib <- gpr_mdl$predict(as.matrix(calib[, xnames, drop = FALSE]), se.fit = TRUE)$se
 
-    pr_calib <- pnorm((-c - mean_calib) / sd_calib)
+  pr_calib <- pnorm((-c - mean_calib) / sd_calib)
 
-    ## Computing the censoring scores for the test data
-    if(!is.null(test)){
-      newdata <- data.frame(test)
-      colnames(newdata) <- xnames
-      mean_new <- gpr_mdl$predict(as.matrix(newdata[,names(newdata) %in% xnames]))
-      sd_new <- gpr_mdl$predict(as.matrix(newdata[,names(newdata) %in% xnames]),
-                              se.fit = TRUE)$se
-
-      pr_new <- pnorm((-c - mean_new) / sd_new)
-
-    }else{pr_new=NULL}
-  return(list(pr_calib = pr_calib, pr_new = pr_new))}
+  ## Computing the censoring scores for the test data
+  if (!is.null(test)) {
+    newdata <- data.frame(test)
+    colnames(newdata) <- xnames
+    mean_new <- gpr_mdl$predict(as.matrix(newdata[, xnames, drop = FALSE]))
+    sd_new <- gpr_mdl$predict(as.matrix(newdata[, xnames, drop = FALSE]), se.fit = TRUE)$se
+    pr_new <- pnorm((-c - mean_new) / sd_new)
+  } else {
+    pr_new = NULL
+  }
+  return(list(pr_calib = pr_calib, pr_new = pr_new))
+}

@@ -1,6 +1,7 @@
 simu <- function(seed, setting, only_cams = FALSE,
                  n_train, n_calib, n_test,
-                 xmin, xmax, alpha) {
+                 xmin, xmax, alpha,
+                 bernoulli_prob = 0.1) {
   set.seed(seed)
   mod <- "cox"
 
@@ -15,14 +16,14 @@ simu <- function(seed, setting, only_cams = FALSE,
     omp_set_num_threads(n_threads)
   }
 
-  mdl0_dir <- "../saved_models"
+  mdl0_dir <- sprintf("../saved_models%s", as.character(bernoulli_prob))
   dir.create(mdl0_dir, showWarnings = FALSE, recursive = TRUE)
 
   ## Initialization
 
   ## Generate data according to the setting
   data_obj <- model_generating_fun(n_train, n_calib, n_test,
-                                   setting, xmin, xmax)
+                                   setting, xmin, xmax, bernoulli_prob)
 
   p <- data_obj$p
   xnames <- paste0("X", 1:p)
@@ -31,38 +32,22 @@ simu <- function(seed, setting, only_cams = FALSE,
   data_fit <- data_obj$data_fit
   data_calib <- data_obj$data_calib
   data_test <- data_obj$data_test
-  data <- data_obj$data
   T_test <- data_obj$T_test
 
   ########################################
   ## Core Pipeline Helper Function
   ########################################
   # This function trains all 6 methods and returns their lower bounds and times
-  run_pipeline <- function(sub_fit, sub_calib, sub_test, sub_data, xnames_to_use, alpha, seed, mod, non_cams_mode="joint") {
+  run_pipeline <- function(sub_fit, sub_calib, sub_test,
+                           xnames_to_use, alpha, seed,
+                           mod, non_cams_mode = "joint") {
     # Utility function to safely extract quantiles from a coxph object
-    extract_quant <- function(mdl, x, alpha){
-      res <- summary(survfit(mdl, newdata = x))
-      time_point <- res$time
-      survcdf <- 1 - res$surv
-      if(sum(survcdf >= alpha)==0){
-        quant = max(time_point)
-      }else{
-        quant <- time_point[min(which(survcdf >= alpha))]
-      }
-      return(quant)
-    }
-    
-    n_train_sub <- nrow(sub_fit)
     p_sub <- length(xnames_to_use)
-    
-    x <- sub_test[, xnames_to_use, drop=FALSE]
-    Xtrain <- sub_data[, xnames_to_use, drop=FALSE]
-    C <- sub_data$C
-    event <- sub_data$event
-    time <- sub_data$censored_T
-    
-    fit <- sub_fit
-    fit$C <- -fit$C
+    len_test <- nrow(sub_test)
+
+    x_test <- sub_test[, xnames_to_use, drop = FALSE]
+    sub_data <- rbind(sub_fit, sub_calib)
+    Xtrain <- sub_data[, xnames_to_use, drop = FALSE]
 
     mdl0_file <- file.path(mdl0_dir, sprintf("mdl0_%s_%s_seed_%d.rds", non_cams_mode, setting, seed))
 
@@ -72,6 +57,8 @@ simu <- function(seed, setting, only_cams = FALSE,
       time_mdl0 <- 0 # Set to 0 since it didn't take time to train this run
     } else {
       cat("Training mdl0...\n")
+      fit <- sub_fit
+      fit$C <- -fit$C
       start_time <- proc.time()[3]
       mdl0 <- GauPro::gpkm(X = as.matrix(fit[, xnames_to_use, drop=FALSE]), 
                            Z = fit$C,
@@ -88,10 +75,19 @@ simu <- function(seed, setting, only_cams = FALSE,
       # 2. cfsurv_c (qt and qct)
       cat("Training cfsurv_c...\n")
       start_time <- proc.time()[3]
-      lb_res <- cfsurv_c(x=x, Xtrain=Xtrain, C=C, event=event, time=time, alpha=alpha, mdl0=mdl0)
+      lb_res <- cox_based(
+        x = x_test,
+        p = p_sub,
+        len_x = len_test,
+        xnames = xnames_to_use,
+        data_fit = sub_fit,
+        data_calib = sub_calib,
+        mdl0 = mdl0,
+        alpha = alpha
+      )
       time_q <- proc.time()[3] - start_time
       cat(sprintf("cfsurv_c trained in %.2f seconds.\n", time_q))
-      
+
       res1 <- lb_res$lower_bnd_qtl
       res2 <- lb_res$lower_bnd_qctl
       time_qt <- lb_res$time_qt
@@ -99,57 +95,63 @@ simu <- function(seed, setting, only_cams = FALSE,
       time_q_base <- time_q - (time_qt + time_qct)
       time_qt <- time_qt + time_q_base + time_mdl0
       time_qct <- time_qct + time_q_base + time_mdl0
-      
+
       times <- c(time_qt, time_qct)
-      output <- data.frame(qtl = res1, qctl = res2)
-      
+      output <- data.frame(
+        "DFT-adaptive-T" = res1,
+        "DFT-adaptive-CT" = res2,
+        check.names = FALSE
+      )
+
       # 3. cfsurv (qc0)
       cat("Training cfsurv (qc0)...\n")
       start_time <- proc.time()[3]
-
-      res0 <- cfsurv(x = x,
-                    c_list = NULL,
-                    pr_list = NULL, 
-                    pr_new_list = NULL,
-                    Xtrain = Xtrain,
-                    C = C,
-                    event = event,
-                    time = time,
-                    alpha = alpha,
-                    type = "quantile",
-                    model = mod, 
-                    dist = "weibull",
-                    I_fit = NULL,
-                    ftol = 0.1,
-                    tol = 0.1,
-                    n.tree = 100,
-                    mdl0 = mdl0)
-
+      res0 <- cfsurv(
+        x = x_test,
+        p = p_sub,
+        len_x = len_test,
+        xnames = xnames_to_use,
+        data_fit = sub_fit,
+        data_calib = sub_calib,
+        n = nrow(sub_data),
+        alpha = alpha,
+        type = "quantile",
+        model = mod,
+        dist = "weibull",
+        c_list = NULL,
+        pr_list = NULL,
+        pr_new_list = NULL,
+        ftol = 0.1,
+        tol = 0.1,
+        n_tree = 100,
+        mdl0 = mdl0
+      )
       raw_time_qc0 <- proc.time()[3] - start_time
       cat(sprintf("cfsurv (qc0) trained in %.2f seconds.\n", raw_time_qc0))
       time_qc0 <- raw_time_qc0 + time_mdl0
       times <- c(times, time_qc0)
       if (length(res0$res) == 0) {
         cat("  -> [WARNING] cfsurv returned empty predictions. Filling with NAs.\n")
-        output$qc0 <- rep(NA, nrow(output))
+        output[["DFT-fixed"]] <- rep(NA, nrow(output))
       } else {
-        output$qc0 <- res0$res
+        output[["DFT-fixed"]] <- res0$res
       }
-      
+
       # 4. vanilla CQR
       cat("Training vanilla CQR...\n")
       start_time <- proc.time()[3]
       res <- lapply(alpha, cqr,
-                    x = x,
+                    x = x_test,
                     Xtrain = Xtrain,
                     Ytrain = sub_data$censored_T,
-                    I_fit = 1:n_train_sub,
+                    I_fit = 1:nrow(sub_fit),
                     seed = seed + 7)
       res <- do.call(rbind, lapply(res, as.data.frame))
-      output$cqr.bnd <- res[, 1]
+      output[["Vanilla CQR"]] <- res[, 1]
       vanilla_cqr_time <- proc.time()[3] - start_time
       times <- c(times, vanilla_cqr_time)
       cat(sprintf("Vanilla CQR trained in %.2f seconds.\n", vanilla_cqr_time))
+
       # 5. Cox Model
       # cat("Training Cox Model...\n")
       # start_time <- proc.time()[3]
@@ -178,6 +180,19 @@ simu <- function(seed, setting, only_cams = FALSE,
       # cat(sprintf("Cox Model trained in %.2f seconds.\n", cox_time))
       
       # 6. Random Forest
+
+      # extract_quant <- function(mdl, x, alpha) {
+      # res <- summary(survfit(mdl, newdata = x))
+      # time_point <- res$time
+      # survcdf <- 1 - res$surv
+      # if(sum(survcdf >= alpha)==0){
+      #   quant = max(time_point)
+      # }else{
+      #   quant <- time_point[min(which(survcdf >= alpha))]
+      # }
+      # return(quant)
+      # }
+
       # cat("Training Random Forest...\n")
       # start_time <- proc.time()[3]
       # ntree <- 1000
@@ -196,13 +211,10 @@ simu <- function(seed, setting, only_cams = FALSE,
       times <- NA
       output <- NA
     }
-    
+
     return(list(output = output, times = times, mdl0 = mdl0))
   }
-  
-  ########################################
-  ## Track Subgroup Indices
-  ########################################
+
   idx_test_0 <- data_test$X1 == 0
   idx_test_1 <- data_test$X1 == 1
 
@@ -210,7 +222,7 @@ simu <- function(seed, setting, only_cams = FALSE,
   ## APPROACH 1: Joint Modeling
   ########################################
   cat("========== Executing Approach 1: Joint Modeling ==========\n")
-  res_joint <- run_pipeline(data_fit, data_calib, data_test, data, 
+  res_joint <- run_pipeline(data_fit, data_calib, data_test,
                             xnames, alpha, seed, mod, "joint")
 
   ########################################
@@ -221,14 +233,12 @@ simu <- function(seed, setting, only_cams = FALSE,
     res_0 <- run_pipeline(data_fit[data_fit$X1 == 0, , drop=FALSE],
                           data_calib[data_calib$X1 == 0, , drop=FALSE],
                           data_test[data_test$X1 == 0, , drop=FALSE],
-                          data[data$X1 == 0, , drop=FALSE],
                           xnames_sub, alpha, seed, mod, "subgroup0")
                                   
     cat("========== Executing Approach 2: Subgroup X1 = 1 ==========\n")
     res_1 <- run_pipeline(data_fit[data_fit$X1 == 1, , drop=FALSE],
                           data_calib[data_calib$X1 == 1, , drop=FALSE],
                           data_test[data_test$X1 == 1, , drop=FALSE],
-                          data[data$X1 == 1, , drop=FALSE],
                           xnames_sub, alpha, seed, mod, "subgroup1")
     
     # Merge subgroup outputs to map exactly to the data_test row order
@@ -243,55 +253,59 @@ simu <- function(seed, setting, only_cams = FALSE,
   ########################################
   ## APPROACH 3: CAMS
   ########################################
-  # Moved here because we need res_joint$mdl0 to be fully computed first
   cat("========== Executing Approach 3: CAMS ==========\n")
   start_time_cams <- proc.time()[3]
-  cams_res <- cams(x = data_test[, xnames, drop=FALSE],
-                   Xtrain = data[, xnames, drop=FALSE],
-                   C = data$C,
-                   event = data$event,
-                   time = data$censored_T,
-                   alpha = alpha,
-                   p = length(xnames),
-                   mdl0 = res_joint$mdl0)  # Borrowing the GPR trained in Joint
-                   
+  cams_res <- cams(
+    x = data_test[, xnames, drop = FALSE],
+    p = p,
+    len_x = nrow(data_test),
+    xnames = xnames,
+    data_fit = data_fit,
+    data_calib = data_calib,
+    mdl0 = res_joint$mdl0,
+    alpha = alpha
+  )
   time_cams <- proc.time()[3] - start_time_cams
   cat(sprintf("CAMS trained in %.2f seconds.\n", time_cams))
-  
-  # CAMS returns a dataframe, we extract the vector for metric math
-  cams_vec <- cams_res[[1]]
 
-  # Calculate CAMS metrics explicitly
-  df_cams <- data.frame(
-    "method"                       = "CAMS",
-    "setting"                      = setting,
-    "group coverage for x_1 = 0"   = sum(T_test[idx_test_0] >= cams_vec[idx_test_0]) / sum(idx_test_0),
-    "group coverage for x_1 = 1"   = sum(T_test[idx_test_1] >= cams_vec[idx_test_1]) / sum(idx_test_1),
-    "Marginal coverage"            = sum(T_test >= cams_vec) / length(cams_vec),
-    "lower bound mean for x_1 = 0" = mean(cams_vec[idx_test_0]),
-    "lower bound mean for x_1 = 1" = mean(cams_vec[idx_test_1]),
-    "lower bound values mean"      = mean(cams_vec),
-    "computation time"             = time_cams,
-    check.names = FALSE
-  )
+  compute_metrics <- function(output_df, times_vec = NULL, suffix_label = NULL) {
 
-  ########################################
-  ## Format Output Helper
-  ########################################
-  compute_metrics <- function(output_df, times_vec, suffix_label) {
-    # Coverage logic
-    cov_marg <- apply(output_df, 2, function(x) sum(T_test >= x) / length(x))
-    cov_grp0 <- apply(output_df, 2, function(x) sum(T_test[idx_test_0] >= x[idx_test_0]) / sum(idx_test_0))
-    cov_grp1 <- apply(output_df, 2, function(x) sum(T_test[idx_test_1] >= x[idx_test_1]) / sum(idx_test_1))
-    
-    # Mean logic
-    simulen      <- apply(output_df, 2, mean)
-    simulen_grp0 <- apply(output_df, 2, function(x) mean(x[idx_test_0]))
-    simulen_grp1 <- apply(output_df, 2, function(x) mean(x[idx_test_1]))
-    
-    method_names <- paste(c("DFT-adaptive-T", "DFT-adaptive-CT", "DFT-fixed", 
-                            "Vanilla CQR"), suffix_label)
-    
+    method_names <- colnames(output_df)
+
+    if (!is.null(suffix_label)) {
+      method_names <- paste(method_names, suffix_label)
+    }
+
+    if (is.null(times_vec)) {
+      times_vec <- rep(NA_real_, ncol(output_df))
+    }
+
+    if (length(times_vec) == 1) {
+      times_vec <- rep(times_vec, ncol(output_df))
+    }
+
+    cov_marg <- apply(output_df, 2, function(x) {
+      mean(T_test >= x, na.rm = TRUE)
+    })
+
+    cov_grp0 <- apply(output_df, 2, function(x) {
+      mean(T_test[idx_test_0] >= x[idx_test_0], na.rm = TRUE)
+    })
+
+    cov_grp1 <- apply(output_df, 2, function(x) {
+      mean(T_test[idx_test_1] >= x[idx_test_1], na.rm = TRUE)
+    })
+
+    simulen <- apply(output_df, 2, mean, na.rm = TRUE)
+
+    simulen_grp0 <- apply(output_df, 2, function(x) {
+      mean(x[idx_test_0], na.rm = TRUE)
+    })
+
+    simulen_grp1 <- apply(output_df, 2, function(x) {
+      mean(x[idx_test_1], na.rm = TRUE)
+    })
+
     data.frame(
       "method"                       = method_names,
       "setting"                      = setting,
@@ -302,23 +316,37 @@ simu <- function(seed, setting, only_cams = FALSE,
       "lower bound mean for x_1 = 1" = simulen_grp1,
       "lower bound values mean"      = simulen,
       "computation time"             = times_vec,
-      check.names = FALSE
+      check.names = FALSE,
+      row.names = NULL
     )
   }
+
+  df_cams <- compute_metrics(
+    cams_res$output,
+    times_vec = time_cams,
+    suffix_label = NULL
+  )
   
   ########################################
   ## Compute & Bind Final Results
   ########################################
   if (!only_cams) {
-    df_joint <- compute_metrics(res_joint$output, res_joint$times, "(Joint)")
-    df_subgroup <- compute_metrics(output_subgroup, times_subgroup, "(Subgroup)")
+    df_joint <- compute_metrics(
+      res_joint$output,
+      times_vec = res_joint$times,
+      suffix_label = "(Joint)"
+    )
+    df_subgroup <- compute_metrics(
+      output_subgroup,
+      times_vec = times_subgroup,
+      suffix_label = "(Subgroup)"
+    )
     # Append CAMS to the final CSV output
     simu_out <- rbind(df_cams, df_joint, df_subgroup)
-    rownames(simu_out) <- NULL
   } else {
     simu_out <- df_cams
-    rownames(simu_out) <- NULL
   }
 
+  rownames(simu_out) <- NULL
   return(simu_out)
 }

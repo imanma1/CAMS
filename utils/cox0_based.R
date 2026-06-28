@@ -17,23 +17,15 @@
 #'
 #' @export
 
-cox0_based <- function(x,c,alpha,
-                      data_fit,
-                      data_calib,
-                      type,
-                      dist,
-                      weight_calib,
-                      weight_new,
-                      ftol=.1,tol=.1){
-  ## Check the dimensionality of the input
-  if(is.null(dim(x)[1])){
-    len_x <- length(x)
-    p <- 1
-  }else{
-    len_x <- dim(x)[1]
-    p <- dim(x)[2]
-  }
-
+cox0_based <- function(x, p, len_x, xnames,
+                       c, alpha,
+                       data_fit,
+                       data_calib,
+                       type,
+                       dist,
+                       weight_calib,
+                       weight_new,
+                       ftol = .1, tol = .1) {
   ## Keep only the data points with C>=c
   ## Transform min(T,C) to min(T,c) 
   weight_calib <- weight_calib[data_calib$C>=c]
@@ -42,30 +34,29 @@ cox0_based <- function(x,c,alpha,
   
   if(type == "quantile"){
     ## Fit the survival model
-    xnames <- paste0("X",1:p)
     fmla <- as.formula(paste("Surv(censored_T, event) ~ ", paste(xnames, collapse= "+")))
-    mdl <- survreg(fmla,data=data_fit,dist=dist)
+    mdl <- survreg(fmla, data = data_fit, dist = dist)
 
     ## The fitted quantile for the calibration data
     res <- predict(mdl,
                   newdata = data_calib,
-                  type="quantile",
-                  p=alpha)
-    quant <-  res  
-    score <- pmin(c,quant)-data_calib$censored_T
+                  type = "quantile",
+                  p = alpha)
+    quant <- res
+    score <- pmin(c, quant) - data_calib$censored_T
   
     ## The fitted quantile for the new data
     newdata <- data.frame(x)
     colnames(newdata) <- xnames
     res <- predict(mdl,
-                  newdata = newdata,
-                  type="quantile",
-                  p=alpha)
+                   newdata = newdata,
+                   type = "quantile",
+                   p = alpha)
     new_quant <-  res
 
     ## Compute the calibration term
-    calib_term <- sapply(X=weight_new,get_calibration,score=score,
-                        weight_calib=weight_calib,alpha=alpha)
+    calib_term <- sapply(X=weight_new, get_calibration, score = score,
+                         weight_calib = weight_calib, alpha = alpha)
     ## obtain final confidence interval
     if (nrow(data_calib) == 0) {
       # If there is no calibration data, fallback to the uncalibrated prediction
@@ -79,22 +70,21 @@ cox0_based <- function(x,c,alpha,
 
   if(type == "percentile"){
     ## Fit the model for S(y)=p(min(T,c)>=y|X)
-    xnames <- paste0("X",1:p)
     data_fit <- data_fit[data_fit$C>=c,]
     data_fit$censored_T <- pmin(data_fit$censored_T,c)
-   
+
     surv_data_fit <- data_fit
     surv_data_fit$censored_T <- -surv_data_fit$censored_T
     fmla <- with(surv_data_fit,as.formula(paste("censored_T ~ ", paste(xnames, collapse= "+"))))
     if(p==1){
-      capture.output(bw <- npcdistbw(fmla),file='NULL')
+      capture.output(bw <- npcdistbw(fmla), file = 'NULL')
     }else{
-      capture.output(bw <- npcdistbw(fmla,ftol=ftol,tol=tol),file='NULL')
+      capture.output(bw <- npcdistbw(fmla, ftol = ftol, tol = tol), file = 'NULL')
     }
 
     surv_data_calib <- data_calib
     surv_data_calib$censored_T <- -surv_data_calib$censored_T
-    score<- npcdist(bws=bw,newdata = surv_data_calib)$condist
+    score<- npcdist(bws = bw, newdata = surv_data_calib)$condist
     
     ## Obtain the calibration term
     calib_term <- sapply(X=weight_new,get_calibration,score=score,

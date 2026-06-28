@@ -1,134 +1,192 @@
-cams <- function(x, Xtrain, C, event, time, alpha = 0.1, p, mdl0) {
+cams <- function(x, p, len_x, xnames,
+                 data_fit, data_calib,
+                 mdl0, alpha) {
 
-  if(is.null(dim(x)[1])) {
-    len_x <- length(x)
-    p <- 1
-  } else {
-    len_x <- dim(x)[1]
-    p <- dim(x)[2]
-  }
-
-  X <- Xtrain
-  xnames <- paste0("X", 1:p)
-  data <- as.data.frame(cbind(C, event, time, X))
-  colnames(data) <- c("C", "event", "censored_T", xnames)
-
-  ## Split the data into the training set and the calibration set
-  n <- dim(data)[1]
-  n_train <- n/2
-  I_fit <- sample(1:n, n_train, replace = FALSE)
-  data_fit <- data[I_fit,]
-  data_calib <- data[-I_fit,]
-
-  ## Fit the survival model
   newdata <- data.frame(x)
   colnames(newdata) <- xnames
-  fmla <- as.formula(paste("Surv(censored_T, event) ~ ", paste(xnames, collapse= "+")))
+
+  fmla <- as.formula(
+    paste("Surv(censored_T, event) ~ ", paste(xnames, collapse = "+"))
+  )
+
   mdl <- survreg(fmla, data = data_fit, dist = "weibull")
-  
-  # The truncation level eta for the IPCW weights
-  eta = 1/log(n)
-  
-  lower_bnd0 <- est_alpha_ipcw(mdl,
-                               newdata[newdata$X1 == 0, , drop=FALSE], 
-                               data_calib[data_calib$X1 == 0, , drop=FALSE],
-                               xnames, alpha, len_x, mdl0, eta)
-                               
-  lower_bnd1 <- est_alpha_ipcw(mdl, 
-                               newdata[newdata$X1 == 1, , drop=FALSE], 
-                               data_calib[data_calib$X1 == 1, , drop=FALSE],
-                               xnames, alpha, len_x, mdl0, eta)
-                               
+
+  eta <- 1 / log(nrow(data_calib))
 
   idx_test_0 <- newdata$X1 == 0
   idx_test_1 <- newdata$X1 == 1
-  
-  # Initialize a blank numeric vector and fill it
-  lower_bnd_vec <- rep(NA, nrow(newdata))
-  lower_bnd_vec[idx_test_0] <- lower_bnd0
-  lower_bnd_vec[idx_test_1] <- lower_bnd1
 
-  # Convert into a 1-column data frame
-  lower_bnd <- data.frame(cams_bnd = lower_bnd_vec)
+  newdata0 <- newdata[idx_test_0, , drop = FALSE]
+  newdata1 <- newdata[idx_test_1, , drop = FALSE]
 
-  return(lower_bnd)
+  calib0 <- data_calib[data_calib$X1 == 0, , drop = FALSE]
+  calib1 <- data_calib[data_calib$X1 == 1, , drop = FALSE]
+
+  res0 <- est_alpha_ipcw(
+    mdl, newdata0, calib0,
+    xnames, alpha, nrow(newdata0), mdl0, eta
+  )
+
+  res1 <- est_alpha_ipcw(
+    mdl, newdata1, calib1,
+    xnames, alpha, nrow(newdata1), mdl0, eta
+  )
+
+  method_names <- names(res0)
+
+  output <- as.data.frame(
+    setNames(
+      replicate(length(method_names), rep(NA_real_, nrow(newdata)), simplify = FALSE),
+      method_names
+    ),
+    check.names = FALSE
+  )
+
+  for (method_name in method_names) {
+    output[idx_test_0, method_name] <- res0[[method_name]]
+    output[idx_test_1, method_name] <- res1[[method_name]]
+  }
+
+  output[] <- lapply(output, function(z) pmax(z, 0))
+
+  return(list(
+    output = output,
+    times = rep(NA_real_, ncol(output))
+  ))
 }
 
-# ==========================================
-# est_alpha_ipcw
-# ==========================================
-est_alpha_ipcw <- function(mdl, newdata, data_calib, xnames, alpha, len_x, mdl0, eta) {
-  
-  # FIX 4: Use a fixed, coarse grid for Lambda as dictated by the 2026 methodology
+est_alpha_ipcw <- function(mdl, newdata, data_calib,
+                           xnames, alpha, len_x,
+                           mdl0, eta) {
+
+  method_names <- c(
+    "CAMS",
+    "SN-CAMS",
+    "CAMS-raw",
+    "SN-CAMS-raw"
+  )
+
+  if (nrow(newdata) == 0) {
+    return(setNames(
+      replicate(length(method_names), numeric(0), simplify = FALSE),
+      method_names
+    ))
+  }
+
+  if (nrow(data_calib) == 0) {
+    return(setNames(
+      replicate(length(method_names), rep(0, nrow(newdata)), simplify = FALSE),
+      method_names
+    ))
+  }
+
   v_list <- seq(0.001, 0.999, by = 0.001)
-  
-  calib_mat <- as.matrix(data_calib[,names(data_calib) %in% xnames, drop=FALSE])
+
+  calib_mat <- as.matrix(data_calib[, xnames, drop = FALSE])
+
   gpr_mean <- mdl0$predict(calib_mat)
   gpr_sd <- mdl0$predict(calib_mat, se.fit = TRUE)$se
 
-  calib_x <- data_calib[,names(data_calib) %in% xnames, drop=FALSE]
+  calib_x <- data_calib[, xnames, drop = FALSE]
   n_calib_subgroup <- nrow(data_calib)
 
-  # Calculate P(-C <= -t)
-  pr_calib <- pnorm((-data_calib$censored_T - gpr_mean) / gpr_sd)
-  pr_calib <- pmax(pr_calib, eta)
-  weight_calib <- 1 / pr_calib
-  n_eff <- (n_calib_subgroup^2) / sum(weight_calib^2)
+  raw_pr_calib <- pnorm((-data_calib$censored_T - gpr_mean) / gpr_sd)
 
-  # Pre-calculate effective sample size for the penalty
-  # n_eff <- (n_calib_subgroup^2) / sum(weight_calib^2)
+  # Eta-truncated probabilities and weights
+  pr_calib <- pmax(raw_pr_calib, eta)
+  weight_calib <- 1 / pr_calib
+
+  # Raw probabilities and raw weights: no eta truncation
+  raw_weight_calib <- 1 / raw_pr_calib
+
+  n_eff <- (n_calib_subgroup^2) / sum(weight_calib^2)
   K_maps <- length(v_list)
 
-  # Pre-calculate the Hajek normalization denominator
-  # This sums the weights of all actually observed events in the subgroup
-  total_weight <- sum(weight_calib[data_calib$event == 1])
-  
-  est_alpha <- function(v) {
+  total_weight_event <- sum(weight_calib[data_calib$event == 1])
+  total_raw_weight_event <- sum(raw_weight_calib[data_calib$event == 1])
+
+  est_alpha_all <- function(v) {
     lv_calib <- lv_cams(mdl, calib_x, v)
-    ind = (data_calib$censored_T < lv_calib) & (data_calib$event == 1)
-    
-    # FIX 1: Hajek Self-Normalization
+
+    ind <- (data_calib$censored_T < lv_calib) &
+      (data_calib$event == 1)
+
+    # Numerators
     sum_num <- sum(weight_calib[ind])
-    
-    # Prevent division by zero if total_weight is incredibly small
-    if(total_weight == 0) {
-      risk_empirical <- 1
+    sum_raw_num <- sum(raw_weight_calib[ind])
+
+    # 1. Regular CAMS: eta-truncated weights, n_R denominator
+    risk_cams <- sum_num / n_calib_subgroup
+
+    # 2. SN-CAMS: eta-truncated weights, self-normalized denominator
+    if (total_weight_event == 0 || is.na(total_weight_event)) {
+      risk_sn_cams <- 1
     } else {
-      risk_empirical <- sum_num / total_weight
+      risk_sn_cams <- sum_num / total_weight_event
     }
-    
-    # FIX 2: Reintroduce a Gentle Penalty Buffer
-    # We use a small tuning constant C_0 = 0.05 so it doesn't crush the bounds
-    C_0 <- 0 
+
+    # 3. CAMS-raw: raw weights, n_R denominator
+    risk_cams_raw <- sum_raw_num / n_calib_subgroup
+
+    # 4. SN-CAMS-raw: raw weights, self-normalized denominator
+    if (total_raw_weight_event == 0 || is.na(total_raw_weight_event)) {
+      risk_sn_cams_raw <- 1
+    } else {
+      risk_sn_cams_raw <- sum_raw_num / total_raw_weight_event
+    }
+
+    C_0 <- 0
     penalty <- C_0 * sqrt((log(2) + log(K_maps)) / n_eff)
-    risk_penalized <- risk_empirical + penalty
-    
-    if(is.na(risk_penalized)) return(1) else return(risk_penalized)
+
+    risk_cams <- risk_cams + penalty
+    risk_sn_cams <- risk_sn_cams + penalty
+    risk_cams_raw <- risk_cams_raw + penalty
+    risk_sn_cams_raw <- risk_sn_cams_raw + penalty
+
+    if (is.na(risk_cams) || is.nan(risk_cams)) risk_cams <- 1
+    if (is.na(risk_sn_cams) || is.nan(risk_sn_cams)) risk_sn_cams <- 1
+    if (is.na(risk_cams_raw) || is.nan(risk_cams_raw)) risk_cams_raw <- 1
+    if (is.na(risk_sn_cams_raw) || is.nan(risk_sn_cams_raw)) risk_sn_cams_raw <- 1
+
+    c(
+      "CAMS" = risk_cams,
+      "SN-CAMS" = risk_sn_cams,
+      "CAMS-raw" = risk_cams_raw,
+      "SN-CAMS-raw" = risk_sn_cams_raw
+    )
   }
 
-  alpha_v_list <- unlist(lapply(v_list, est_alpha))
-  alpha_v <- cummax(alpha_v_list) # Monotonize
-  
-  if(sum(alpha_v <= alpha) == 0){
-    v_hat_l = NULL
-  } else {
-    v_hat_l <- max(v_list[alpha_v <= alpha])
+  risk_mat <- t(sapply(v_list, est_alpha_all))
+
+  for (method_name in method_names) {
+    risk_mat[, method_name] <- cummax(risk_mat[, method_name])
   }
-  
-  if (is.null(v_hat_l)) {
-    lower_bnd_l <- rep(0, len_x)
-  } else {
-    lower_bnd_l <- as.numeric(lv_cams(mdl, newdata, v_hat_l))
-    if (length(lower_bnd_l) == 1) {
-      lower_bnd_l <- rep(lower_bnd_l, len_x)
+
+  get_bound_for_method <- function(method_name) {
+    feasible <- v_list[risk_mat[, method_name] <= alpha]
+
+    if (length(feasible) == 0) {
+      return(rep(0, len_x))
     }
+
+    v_hat <- max(feasible)
+
+    lower_bnd <- as.numeric(lv_cams(mdl, newdata, v_hat))
+
+    if (length(lower_bnd) == 1) {
+      lower_bnd <- rep(lower_bnd, len_x)
+    }
+
+    lower_bnd
   }
-  return(lower_bnd_l)
+
+  out <- lapply(method_names, get_bound_for_method)
+  names(out) <- method_names
+
+  return(out)
 }
 
-# ==========================================
-# Core Helper Functions
-# ==========================================
+
 lv_cams <- function(mdl, calib_x, v){
   if(length(v) == 0) {
     return(rep(0, times = nrow(calib_x)))

@@ -2,17 +2,17 @@
 ## estimate miscoverage rate 
 ## using estimated quantile of T
 ############################################
-alpha_qt <- function(mdl, newdata, data_fit, data_calib, xnames, alpha, len_x, mdl0, cens_rt){
+alpha_qt <- function(mdl, newdata, data_fit, data_calib, xnames, alpha, len_x, mdl0, cens_rt) {
   v_list = v_pts_qt(mdl, data_fit, data_calib, xnames, alpha, cens_rt)
   v_list = sort(unique(as.numeric(v_list)))
   
   # === OPTIMIZATION 1: PRE-COMPUTE GAUPRO ===
   # Do not call predict() inside the loop! Do it once here.
-  calib_mat <- as.matrix(data_calib[,names(data_calib) %in% xnames, drop=FALSE])
+  calib_mat <- as.matrix(data_calib[, xnames, drop = FALSE])
   gpr_mean <- mdl0$predict(calib_mat)
   gpr_sd <- mdl0$predict(calib_mat, se.fit = TRUE)$se
   
-  calib_x <- data_calib[,names(data_calib) %in% xnames, drop=FALSE]
+  calib_x <- data_calib[, xnames, drop = FALSE]
   
   # Inline the fast evaluator
   est_alpha_qt_fast <- function(v) {
@@ -75,11 +75,11 @@ alpha_qct <- function(mdl, qc_mdl, newdata, data_fit, data_calib, xnames, alpha,
   v_list = sort(unique(as.numeric(v_list)))
 
   # === OPTIMIZATION 1: PRE-COMPUTE GAUPRO ===
-  calib_mat <- as.matrix(data_calib[,names(data_calib) %in% xnames, drop=FALSE])
+  calib_mat <- as.matrix(data_calib[, xnames, drop = FALSE])
   gpr_mean <- mdl0$predict(calib_mat)
   gpr_sd <- mdl0$predict(calib_mat, se.fit = TRUE)$se
   
-  calib_x <- data_calib[,names(data_calib) %in% xnames, drop=FALSE]
+  calib_x <- data_calib[, xnames, drop = FALSE]
 
   # === OPTIMIZATION 2: PRE-COMPUTE RF FOR CALIBRATION ===
   calib_qc_preds <- predict(qc_mdl, calib_x, cens_rt)$predictions[,1]
@@ -121,7 +121,7 @@ alpha_qct <- function(mdl, qc_mdl, newdata, data_fit, data_calib, xnames, alpha,
   if (is.null(v_hat_l)) {
     lower_bnd_l <- rep(0, len_x)
   } else {
-    newdata_x <- newdata[, names(newdata) %in% xnames, drop=FALSE]
+    newdata_x <- newdata[, xnames, drop = FALSE]
     newdata_qc_preds <- predict(qc_mdl, newdata_x, cens_rt)$predictions[,1]
     
     # Pass the pre-computed test predictions
@@ -185,8 +185,8 @@ v_pts_qt = function(mdl,
   res_list <- mclapply(1:nrow(data_calib), function(i_calib) {
     # Initialize a vector for this specific row
     pts_row <- c(0, 0) 
-    
-    calib_x = data_calib[i_calib, names(data_calib) %in% xnames, drop=FALSE]
+
+    calib_x = data_calib[i_calib, xnames, drop = FALSE]
     names(calib_x) = xnames
     
     lv = function(v) lv_qt(mdl, calib_x, v, alpha, cens_rt)
@@ -249,7 +249,7 @@ v_pts_qct = function(mdl, qc_mdl,
     n_threads <- ifelse(is.na(slurm_cores), detectCores(), slurm_cores)
   }
 
-  calib_x_full = data_calib[, names(data_calib) %in% xnames, drop=FALSE]
+  calib_x_full = data_calib[, xnames, drop = FALSE]
   names(calib_x_full) = xnames
   qc_preds <- predict(qc_mdl, calib_x_full, cens_rt)$predictions[,1]
   
@@ -257,7 +257,7 @@ v_pts_qct = function(mdl, qc_mdl,
   res_list <- mclapply(1:nrow(data_calib), function(i_calib) {
     pts_row <- c(0, 0)
     
-    calib_x = data_calib[i_calib, names(data_calib) %in% xnames, drop=FALSE]
+    calib_x = data_calib[i_calib, xnames, drop = FALSE]
     names(calib_x) = xnames
     
     # Call the simplified lv_qct

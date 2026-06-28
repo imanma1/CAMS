@@ -4,26 +4,13 @@
 #'
 #' @export
 
-selection_c <- function(X,C,event,time,alpha,
-                        c_ref,weight_ref,
-                        model="cox",
-                        type="quantile",
-                        dist="weibull",
-                        mdl0=NULL){ 
-  
-  ## Get the dimension of the input
-  if(is.null(dim(X))){
-    n <- length(X)
-    p <- 1
-  }else{
-    n <- dim(X)[1]
-    p <- dim(X)[2]
-  }
-  xnames <- paste0("X",1:p)
-  data <- cbind(X,C,event,time)
-  data <- data.frame(data)
-  colnames(data) <- c(xnames,"C","event","censored_T")
-
+selection_c <- function(data, p, n, xnames,
+                        c_ref, weight_ref,
+                        model = "cox",
+                        type = "quantile",
+                        dist = "weibull",
+                        mdl0 = NULL,
+                        alpha) {
   # === OPTIMIZATION: PARALLELIZE GRID SEARCH ===
   library(parallel)
   if (.Platform$OS.type == "windows") {
@@ -96,48 +83,20 @@ evaluate_length <- function(c,alpha,n,p,
     weight_new <- weight[I_test]
   }
   x <- data_test[,colnames(data_test)%in%xnames, drop=FALSE]
-  
-  if(model == "cox"){
-    bnd <- cox0_based(x,c,alpha,
-                     data_fit,
-                     data_calib,
-                     type = "quantile",
-                     dist,
-                     weight_calib,
-                     weight_new)
-   }
-  
-  if(model == "randomforest"){
-    bnd <- rf0_based(x,c,alpha,
-                    data_fit,
-                    data_calib,
-                    weight_calib,
-                    weight_new)
-  }
-  
-  if(model == "pow"){
-    bnd <- pow0_based(x,c,alpha,
-                    data_fit,
-                    data_calib,
-                    weight_calib,
-                    weight_new)
-  }
 
-  if(model == "portnoy"){
-    bnd <- portnoy0_based(x,c,alpha,
-                        data_fit,
-                        data_calib,
-                        weight_calib,
-                        weight_new)
-  }
-
-  if(model == "PengHuang"){
-    bnd <- ph0_based(x,c,alpha,
-                   data_fit,
-                   data_calib,
-                   weight_calib,
-                   weight_new)
-  }
-
+  bnd <- cox0_based(
+    x = x,
+    p = p,
+    len_x = nrow(x),
+    xnames = xnames,
+    c = c,
+    alpha = alpha,
+    data_fit = data_fit,
+    data_calib = data_calib,
+    type = "quantile",
+    dist = dist,
+    weight_calib = weight_calib,
+    weight_new = weight_new
+  )
   return(mean(bnd))
 }
