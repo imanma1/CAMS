@@ -1,43 +1,3 @@
-### added field mdl0 to the function and changed res variable to mdl0.
-### changed the default value of ref_length from 100 to 30.
-
-#' Predictive confidence interval for survival data
-#'
-#' The main function to generate a predictive conformal confidence interval for a unit's survival time.
-#'
-#' @param x a vector of the covariate for test point. 
-#' @param c the censoring time for the test point.
-#' @param Xtrain a n-by-p matrix of the covariate of the training data.
-#' @param C a length n vector of the censoring time of the training data.
-#' @param event a length n vector of indicators if the time observed is censored. TRUE corresponds to NOT censored, and FALSE censored.
-#' @param time  a vevtor of length n, containing the observed survival time.
-#' @param alpha a number between 0 and 1, speciifying the miscoverage rate.
-#' @param seed an integer random seed (default: 24601).
-#' @param model Options include "cox", "randomforest", "Powell", "Portnoy" and "PengHuang". This determines the model used to fit the condditional quantile (default: "cox").
-#' @param dist either "weibull", "exponential" or "gaussian" (default: "weibull"). The distribution of T used in the cox model. 
-#' @param h the bandwidth for the local confidence interval. Default is 1.
-#'
-#' @return low_ci a value of the lower bound for the survival time of the test point.
-#' @return includeR 0 or 1, indicating if [r,inf) is included in the confidence interval.
-#'
-#' @examples
-#' # Generate data
-#' n <- 500
-#' X <- runif(n,0,2)
-#' T <- exp(X+rnorm(n,0,1))
-#' R <- rexp(n,rate = 0.01)
-#' event <- T<=R
-#' time <- pmin(T,R)
-#' data <- data.frame(X=X,R=R,event=event,censored_T=censored_T)
-#' # Prediction point
-#' x <- seq(0,2,by=.4)
-#' r <- 2
-#' # Run cfsurv
-#' res <- cfsurv(x,r,X,R,event,time,alpha=0.1,model="cox")
-#'
-#' @export
-
-# function to construct conformal confidence interval
 cfsurv <- function(x, p, len_x, xnames,
                    data_fit, data_calib, n,
                    alpha = 0.05,
@@ -50,7 +10,8 @@ cfsurv <- function(x, p, len_x, xnames,
                    ftol = 0.1,
                    tol = 0.1,
                    n_tree = 100,
-                   mdl0) {
+                   mdl0,
+                   use_oracle_sc = FALSE) {
   ## Check if the required packages are installed
   ## Solution found from https://stackoverflow.com/questions/4090169/elegant-way-to-check-for-missing-packages-and-install-them
   list.of.packages <- c("ggplot2",
@@ -86,16 +47,50 @@ cfsurv <- function(x, p, len_x, xnames,
 
   if (length(c_list) == 1) {
     c <- c_list
-    res <- cox_censoring_prob(mdl0, data_calib, newdata, xnames, c, ftol, tol)
+
+    res <- cox_censoring_prob(
+      mdl0 = mdl0,
+      calib = data_calib,
+      test = newdata,
+      xnames = xnames,
+      c = c,
+      ftol = ftol,
+      tol = tol,
+      use_oracle_sc = use_oracle_sc
+    )
+
     pr_calib <- res$pr_calib
     pr_new <- res$pr_new
+
   } else {
-    res <- selection_c(data_fit, p, nrow(data_fit), xnames,
-                       c_ref = c_list, weight_ref = NULL,
-                       model = model, type = type, dist = dist,
-                       mdl0 = mdl0, alpha = alpha)
+    res <- selection_c(
+      data = data_fit,
+      p = p,
+      n = nrow(data_fit),
+      xnames = xnames,
+      c_ref = c_list,
+      weight_ref = NULL,
+      model = model,
+      type = type,
+      dist = dist,
+      mdl0 = mdl0,
+      alpha = alpha,
+      use_oracle_sc = use_oracle_sc
+    )
+
     c <- res$c_opt
-    res <- cox_censoring_prob(mdl0, data_calib, newdata, xnames, c, ftol, tol)
+
+    res <- cox_censoring_prob(
+      mdl0 = mdl0,
+      calib = data_calib,
+      test = newdata,
+      xnames = xnames,
+      c = c,
+      ftol = ftol,
+      tol = tol,
+      use_oracle_sc = use_oracle_sc
+    )
+
     pr_calib <- res$pr_calib
     pr_new <- res$pr_new
   }
@@ -106,28 +101,71 @@ cfsurv <- function(x, p, len_x, xnames,
 
   ## Run the main function and gather resutls
   res <- cox0_based(x, p, len_x, xnames,
-                  c, alpha,
-                  data_fit,
-                  data_calib,
-                  type,
-                  dist,
-                  weight_calib,
-                  weight_new,
-                  ftol,
-                  tol)
+                    c, alpha,
+                    data_fit,
+                    data_calib,
+                    type,
+                    dist,
+                    weight_calib,
+                    weight_new,
+                    ftol,
+                    tol)
 
-  return (list(res = res, c = c))
-
+  return(list(res = res, c = c))
 }
 
-cox_censoring_prob <- function(gpr_mdl, calib, test = NULL,
+
+cox_censoring_prob <- function(mdl0, calib, test = NULL,
                                xnames, c,
-                               ftol = .1, tol = .1) {
+                               ftol = .1, tol = .1,
+                               use_oracle_sc = FALSE) {
   p <- length(xnames)
 
+  if (use_oracle_sc || inherits(mdl0, "oracle_sc")) {
+
+    pr_calib <- sc_prob(
+      mdl0 = mdl0,
+      data = calib,
+      xnames = xnames,
+      t = c
+    )
+
+    if (!is.null(test)) {
+      newdata <- data.frame(test)
+
+      if (ncol(newdata) == length(xnames)) {
+        colnames(newdata) <- xnames
+      }
+
+      # In subgroup mode, xnames may exclude X1, but oracle S_C may need X1.
+      # Since calib is subgroup-specific, X1 is constant and can be recovered.
+      if (!("X1" %in% colnames(newdata)) && ("X1" %in% colnames(calib))) {
+        x1_vals <- unique(calib$X1)
+
+        if (length(x1_vals) == 1) {
+          newdata$X1 <- x1_vals
+        } else {
+          stop("Oracle S_C needs X1 for test data, but X1 cannot be inferred from calibration data.")
+        }
+      }
+
+      pr_new <- sc_prob(
+        mdl0 = mdl0,
+        data = newdata,
+        xnames = xnames,
+        t = c
+      )
+
+    } else {
+      pr_new <- NULL
+    }
+
+    return(list(pr_calib = pr_calib, pr_new = pr_new))
+  }
+
   ## Computing the censoring scores for the calibration data
-  mean_calib <- gpr_mdl$predict(as.matrix(calib[, xnames, drop = FALSE]))
-  sd_calib <- gpr_mdl$predict(as.matrix(calib[, xnames, drop = FALSE]), se.fit = TRUE)$se
+  mean_calib <- mdl0$predict(as.matrix(calib[, xnames, drop = FALSE]))
+  sd_calib <- mdl0$predict(as.matrix(calib[, xnames, drop = FALSE]), se.fit = TRUE)$se
 
   pr_calib <- pnorm((-c - mean_calib) / sd_calib)
 
@@ -135,11 +173,14 @@ cox_censoring_prob <- function(gpr_mdl, calib, test = NULL,
   if (!is.null(test)) {
     newdata <- data.frame(test)
     colnames(newdata) <- xnames
-    mean_new <- gpr_mdl$predict(as.matrix(newdata[, xnames, drop = FALSE]))
-    sd_new <- gpr_mdl$predict(as.matrix(newdata[, xnames, drop = FALSE]), se.fit = TRUE)$se
+
+    mean_new <- mdl0$predict(as.matrix(newdata[, xnames, drop = FALSE]))
+    sd_new <- mdl0$predict(as.matrix(newdata[, xnames, drop = FALSE]), se.fit = TRUE)$se
+
     pr_new <- pnorm((-c - mean_new) / sd_new)
   } else {
-    pr_new = NULL
+    pr_new <- NULL
   }
+
   return(list(pr_calib = pr_calib, pr_new = pr_new))
 }

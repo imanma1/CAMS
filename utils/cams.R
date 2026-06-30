@@ -1,6 +1,7 @@
 cams <- function(x, p, len_x, xnames,
                  data_fit, data_calib,
-                 mdl0, alpha) {
+                 mdl0, alpha,
+                 use_oracle_sc = FALSE) {
 
   newdata <- data.frame(x)
   colnames(newdata) <- xnames
@@ -24,12 +25,12 @@ cams <- function(x, p, len_x, xnames,
 
   res0 <- est_alpha_ipcw(
     mdl, newdata0, calib0,
-    xnames, alpha, nrow(newdata0), mdl0, eta
+    xnames, alpha, nrow(newdata0), mdl0, eta, use_oracle_sc
   )
 
   res1 <- est_alpha_ipcw(
     mdl, newdata1, calib1,
-    xnames, alpha, nrow(newdata1), mdl0, eta
+    xnames, alpha, nrow(newdata1), mdl0, eta, use_oracle_sc
   )
 
   method_names <- names(res0)
@@ -57,7 +58,8 @@ cams <- function(x, p, len_x, xnames,
 
 est_alpha_ipcw <- function(mdl, newdata, data_calib,
                            xnames, alpha, len_x,
-                           mdl0, eta) {
+                           mdl0, eta,
+                           use_oracle_sc = FALSE) {
 
   method_names <- c(
     "CAMS",
@@ -82,15 +84,24 @@ est_alpha_ipcw <- function(mdl, newdata, data_calib,
 
   v_list <- seq(0.001, 0.999, by = 0.001)
 
-  calib_mat <- as.matrix(data_calib[, xnames, drop = FALSE])
 
-  gpr_mean <- mdl0$predict(calib_mat)
-  gpr_sd <- mdl0$predict(calib_mat, se.fit = TRUE)$se
 
   calib_x <- data_calib[, xnames, drop = FALSE]
   n_calib_subgroup <- nrow(data_calib)
 
-  raw_pr_calib <- pnorm((-data_calib$censored_T - gpr_mean) / gpr_sd)
+  if (use_oracle_sc) {
+    raw_pr_calib <- sc_prob(
+      mdl0 = mdl0,
+      data = data_calib,
+      xnames = xnames,
+      t = data_calib$censored_T
+    )
+  } else {
+    calib_mat <- as.matrix(data_calib[, xnames, drop = FALSE])
+    gpr_mean <- mdl0$predict(calib_mat)
+    gpr_sd <- mdl0$predict(calib_mat, se.fit = TRUE)$se
+    raw_pr_calib <- pnorm((-data_calib$censored_T - gpr_mean) / gpr_sd)
+  }
 
   # Eta-truncated probabilities and weights
   pr_calib <- pmax(raw_pr_calib, eta)

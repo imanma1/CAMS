@@ -1,7 +1,8 @@
 simu <- function(seed, setting, only_cams = FALSE,
                  n_train, n_calib, n_test,
                  xmin, xmax, alpha,
-                 bernoulli_prob = 0.1) {
+                 bernoulli_prob = 0.1,
+                 use_oracle_sc = FALSE) {
   set.seed(seed)
   mod <- "cox"
 
@@ -49,26 +50,30 @@ simu <- function(seed, setting, only_cams = FALSE,
     sub_data <- rbind(sub_fit, sub_calib)
     Xtrain <- sub_data[, xnames_to_use, drop = FALSE]
 
-    mdl0_file <- file.path(mdl0_dir, sprintf("mdl0_%s_%s_seed_%d.rds", non_cams_mode, setting, seed))
-
-    if (file.exists(mdl0_file)) {
-      cat(sprintf("Found pre-trained mdl0 for %s seed %d. Loading...\n", setting, seed))
-      mdl0 <- readRDS(mdl0_file)
-      time_mdl0 <- 0 # Set to 0 since it didn't take time to train this run
+    if (use_oracle_sc) {
+      mdl0 <- make_oracle_sc_model(setting)
+      time_mdl0 <- 0
     } else {
-      cat("Training mdl0...\n")
-      fit <- sub_fit
-      fit$C <- -fit$C
-      start_time <- proc.time()[3]
-      mdl0 <- GauPro::gpkm(X = as.matrix(fit[, xnames_to_use, drop=FALSE]), 
-                           Z = fit$C,
-                           kernel = "matern52",
-                           parallel = FALSE)
-      time_mdl0 <- proc.time()[3] - start_time
-      cat(sprintf("mdl0 trained in %.2f seconds.\n", time_mdl0))
-      # Save the newly trained model to the hard drive
-      saveRDS(mdl0, file = mdl0_file)
-      cat("Saved mdl0 to disk for future runs.\n")
+      mdl0_file <- file.path(mdl0_dir, sprintf("mdl0_%s_%s_seed_%d.rds", non_cams_mode, setting, seed))
+      if (file.exists(mdl0_file)) {
+        cat(sprintf("Found pre-trained mdl0 for %s seed %d. Loading...\n", setting, seed))
+        mdl0 <- readRDS(mdl0_file)
+        time_mdl0 <- 0
+      } else {
+        cat("Training mdl0...\n")
+        fit <- sub_fit
+        fit$C <- -fit$C
+        start_time <- proc.time()[3]
+        mdl0 <- GauPro::gpkm(X = as.matrix(fit[, xnames_to_use, drop=FALSE]), 
+                            Z = fit$C,
+                            kernel = "matern52",
+                            parallel = FALSE)
+        time_mdl0 <- proc.time()[3] - start_time
+        cat(sprintf("mdl0 trained in %.2f seconds.\n", time_mdl0))
+        # Save the newly trained model to the hard drive
+        saveRDS(mdl0, file = mdl0_file)
+        cat("Saved mdl0 to disk for future runs.\n")
+      }
     }
 
     if (!only_cams) {
@@ -83,7 +88,8 @@ simu <- function(seed, setting, only_cams = FALSE,
         data_fit = sub_fit,
         data_calib = sub_calib,
         mdl0 = mdl0,
-        alpha = alpha
+        alpha = alpha,
+        use_oracle_sc = use_oracle_sc
       )
       time_q <- proc.time()[3] - start_time
       cat(sprintf("cfsurv_c trained in %.2f seconds.\n", time_q))
@@ -124,7 +130,8 @@ simu <- function(seed, setting, only_cams = FALSE,
         ftol = 0.1,
         tol = 0.1,
         n_tree = 100,
-        mdl0 = mdl0
+        mdl0 = mdl0,
+        use_oracle_sc = use_oracle_sc
       )
       raw_time_qc0 <- proc.time()[3] - start_time
       cat(sprintf("cfsurv (qc0) trained in %.2f seconds.\n", raw_time_qc0))
@@ -263,7 +270,8 @@ simu <- function(seed, setting, only_cams = FALSE,
     data_fit = data_fit,
     data_calib = data_calib,
     mdl0 = res_joint$mdl0,
-    alpha = alpha
+    alpha = alpha,
+    use_oracle_sc = use_oracle_sc
   )
   time_cams <- proc.time()[3] - start_time_cams
   cat(sprintf("CAMS trained in %.2f seconds.\n", time_cams))

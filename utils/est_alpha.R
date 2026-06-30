@@ -1,45 +1,49 @@
 ############################################
-## estimate miscoverage rate 
+## estimate miscoverage rate
 ## using estimated quantile of T
 ############################################
-alpha_qt <- function(mdl, newdata, data_fit, data_calib, xnames, alpha, len_x, mdl0, cens_rt) {
-  v_list = v_pts_qt(mdl, data_fit, data_calib, xnames, alpha, cens_rt)
-  v_list = sort(unique(as.numeric(v_list)))
-  
-  # === OPTIMIZATION 1: PRE-COMPUTE GAUPRO ===
-  # Do not call predict() inside the loop! Do it once here.
-  calib_mat <- as.matrix(data_calib[, xnames, drop = FALSE])
-  gpr_mean <- mdl0$predict(calib_mat)
-  gpr_sd <- mdl0$predict(calib_mat, se.fit = TRUE)$se
-  
+alpha_qt <- function(mdl, newdata, data_fit, data_calib, xnames, alpha, len_x, mdl0, cens_rt,
+                     use_oracle_sc = FALSE) {
+  v_list <- v_pts_qt(mdl, data_fit, data_calib, xnames, alpha, cens_rt)
+  v_list <- sort(unique(as.numeric(v_list)))
+
   calib_x <- data_calib[, xnames, drop = FALSE]
-  
-  # Inline the fast evaluator
-  est_alpha_qt_fast <- function(v) {
-    lv_calib <- lv_qt(mdl, calib_x, v, alpha, cens_rt)
-    pr_calib <- pnorm((-lv_calib - gpr_mean) / gpr_sd)
-    weight_calib <- 1 / pr_calib
-    
-    ind1 = (data_calib$censored_T < lv_calib) & (data_calib$C >= lv_calib)
-    ind2 = (data_calib$C >= lv_calib)
-    
-    sum_num <- sum(weight_calib[ind1])
-    sum_den <- sum(weight_calib[ind2])
-    if(sum_den == 0 || is.na(sum_num/sum_den)) return(1) else return(sum_num / sum_den)
+
+  # === VECTORIZED THRESHOLD EVALUATION ===
+  lv_mat <- predict(mdl,
+                    newdata = calib_x,
+                    type = "quantile",
+                    p = 1 - v_list)
+
+  lv_mat <- as.matrix(lv_mat)
+
+  if (nrow(lv_mat) != nrow(data_calib) && ncol(lv_mat) == nrow(data_calib)) {
+    lv_mat <- t(lv_mat)
   }
 
-  # === OPTIMIZATION 3: PARALLELIZE THRESHOLD EVALUATION ===
-  library(parallel)
-  if (.Platform$OS.type == "windows") {
-    n_threads <- 1
+  if (use_oracle_sc) {
+    pr_mat <- sc_prob(
+      mdl0 = mdl0,
+      data = data_calib,
+      xnames = xnames,
+      t = lv_mat
+    )
   } else {
-    slurm_cores <- as.numeric(Sys.getenv("SLURM_CPUS_PER_TASK"))
-    n_threads <- ifelse(is.na(slurm_cores), detectCores(), slurm_cores)
+    calib_mat <- as.matrix(data_calib[, xnames, drop = FALSE])
+    gpr_mean <- mdl0$predict(calib_mat)
+    gpr_sd <- mdl0$predict(calib_mat, se.fit = TRUE)$se
+    pr_mat <- pnorm((-lv_mat - gpr_mean) / gpr_sd)
   }
-  
-  # Use mclapply to evaluate the thresholds across cores. 
-  # We wrap it in unlist() because mclapply returns a list, and we need a numeric vector.
-  alpha_v_list <- unlist(mclapply(v_list, est_alpha_qt_fast, mc.cores = n_threads))
+  weight_mat <- 1 / pr_mat
+
+  ind1_mat <- (data_calib$censored_T < lv_mat) & (data_calib$C >= lv_mat)
+  ind2_mat <- data_calib$C >= lv_mat
+
+  sum_num <- colSums(weight_mat * ind1_mat)
+  sum_den <- colSums(weight_mat * ind2_mat)
+
+  alpha_v_list <- sum_num / sum_den
+  alpha_v_list[sum_den == 0 | is.na(alpha_v_list)] <- 1
 
   # monotonize alpha
   alpha_v <- monot(alpha_v_list)
@@ -48,67 +52,79 @@ alpha_qt <- function(mdl, newdata, data_fit, data_calib, xnames, alpha, len_x, m
   } else {
     v_hat_l <- min(v_list[alpha_v <= alpha])
   }
-  
+
   # === OPTIMIZATION 2: VECTORIZE PREDICTION ===
   if (is.null(v_hat_l)) {
     lower_bnd_l <- rep(0, len_x)
   } else {
     lower_bnd_l <- as.numeric(lv_qt(mdl, newdata, v_hat_l, alpha, cens_rt))
-    
+
     # Safety net: If the function somehow still returns a scalar, expand it
     if (length(lower_bnd_l) == 1) {
       lower_bnd_l <- rep(lower_bnd_l, len_x)
     }
   }
   lower_bnd_g <- rep(0, len_x)
-  
+
   return(list(lower_bnd_l = lower_bnd_l, lower_bnd_g = lower_bnd_g))
 }
 
 
 ################################################################
 ## The function returns predictive intervals resulting
-## from the L_v defined based on integrtaed quantiles
+## from the L_v defined based on integrated quantiles
 ################################################################
-alpha_qct <- function(mdl, qc_mdl, newdata, data_fit, data_calib, xnames, alpha, len_x, mdl0, cens_rt){
-  v_list = v_pts_qct(mdl, qc_mdl, data_fit, data_calib, xnames, alpha, cens_rt)
-  v_list = sort(unique(as.numeric(v_list)))
+alpha_qct <- function(mdl, qc_mdl, newdata, data_fit, data_calib, xnames, alpha, len_x, mdl0, cens_rt,
+                      use_oracle_sc = FALSE){
+  v_list <- v_pts_qct(mdl, qc_mdl, data_fit, data_calib, xnames, alpha, cens_rt)
+  v_list <- sort(unique(as.numeric(v_list)))
 
-  # === OPTIMIZATION 1: PRE-COMPUTE GAUPRO ===
-  calib_mat <- as.matrix(data_calib[, xnames, drop = FALSE])
-  gpr_mean <- mdl0$predict(calib_mat)
-  gpr_sd <- mdl0$predict(calib_mat, se.fit = TRUE)$se
-  
   calib_x <- data_calib[, xnames, drop = FALSE]
 
   # === OPTIMIZATION 2: PRE-COMPUTE RF FOR CALIBRATION ===
   calib_qc_preds <- predict(qc_mdl, calib_x, cens_rt)$predictions[,1]
 
-  est_alpha_qct_fast <- function(v) {
-    # Pass the pre-computed calib_qc_preds array instead of cens_rt
-    lv_calib <- lv_qct(mdl, calib_x, v, alpha, calib_qc_preds)
-    pr_calib <- pnorm((-lv_calib - gpr_mean) / gpr_sd)
-    weight_calib <- 1 / pr_calib
-    
-    ind1 = (data_calib$censored_T < lv_calib) & (data_calib$C >= lv_calib)
-    ind2 = (data_calib$C >= lv_calib)
-    
-    sum_num <- sum(weight_calib[ind1])
-    sum_den <- sum(weight_calib[ind2])
-    if(sum_den == 0 || is.na(sum_num/sum_den)) return(1) else return(sum_num / sum_den)
+  # === VECTORIZED THRESHOLD EVALUATION ===
+  lv1_mat <- predict(mdl,
+                     newdata = calib_x,
+                     type = "quantile",
+                     p = 1 - v_list)
+
+  lv1_mat <- as.matrix(lv1_mat)
+
+  if (nrow(lv1_mat) != nrow(data_calib) && ncol(lv1_mat) == nrow(data_calib)) {
+    lv1_mat <- t(lv1_mat)
   }
 
-  # === OPTIMIZATION 3: PARALLELIZE THRESHOLD EVALUATION ===
-  library(parallel)
-  if (.Platform$OS.type == "windows") {
-    n_threads <- 1
+  qc_mat <- matrix(calib_qc_preds,
+                   nrow = nrow(lv1_mat),
+                   ncol = ncol(lv1_mat))
+
+  lv_mat <- pmin(lv1_mat, qc_mat)
+
+  if (use_oracle_sc) {
+    pr_mat <- sc_prob(
+      mdl0 = mdl0,
+      data = data_calib,
+      xnames = xnames,
+      t = lv_mat
+    )
   } else {
-    slurm_cores <- as.numeric(Sys.getenv("SLURM_CPUS_PER_TASK"))
-    n_threads <- ifelse(is.na(slurm_cores), detectCores(), slurm_cores)
+    calib_mat <- as.matrix(data_calib[, xnames, drop = FALSE])
+    gpr_mean <- mdl0$predict(calib_mat)
+    gpr_sd <- mdl0$predict(calib_mat, se.fit = TRUE)$se
+    pr_mat <- pnorm((-lv_mat - gpr_mean) / gpr_sd)
   }
+  weight_mat <- 1 / pr_mat
 
-  alpha_v_list <- unlist(mclapply(v_list, est_alpha_qct_fast, mc.cores = n_threads))
-  
+  ind1_mat <- (data_calib$censored_T < lv_mat) & (data_calib$C >= lv_mat)
+  ind2_mat <- data_calib$C >= lv_mat
+
+  sum_num <- colSums(weight_mat * ind1_mat)
+  sum_den <- colSums(weight_mat * ind2_mat)
+
+  alpha_v_list <- sum_num / sum_den
+  alpha_v_list[sum_den == 0 | is.na(alpha_v_list)] <- 1
   # monotonize alpha
   alpha_v <- monot(alpha_v_list)
   if(sum(alpha_v <= alpha) == 0) {
@@ -170,9 +186,9 @@ inverse <- function(f, lower, upper){
 v_pts_qt = function(mdl,
                     data_fit, data_calib,
                     xnames, alpha, cens_rt){
-  
+
   library(parallel)
-# Check if the operating system is Windows
+  # Check if the operating system is Windows
   if (.Platform$OS.type == "windows") {
     n_threads <- 1  # Windows doesn't support mclapply, force sequential for local testing
   } else {
@@ -180,7 +196,7 @@ v_pts_qt = function(mdl,
     slurm_cores <- as.numeric(Sys.getenv("SLURM_CPUS_PER_TASK"))
     n_threads <- ifelse(is.na(slurm_cores), detectCores(), slurm_cores)
   }
-  
+
   # Process all rows in parallel
   res_list <- mclapply(1:nrow(data_calib), function(i_calib) {
     # Initialize a vector for this specific row
@@ -188,14 +204,14 @@ v_pts_qt = function(mdl,
 
     calib_x = data_calib[i_calib, xnames, drop = FALSE]
     names(calib_x) = xnames
-    
+
     lv = function(v) lv_qt(mdl, calib_x, v, alpha, cens_rt)
     x0 = 0.02
     x1 = 0.95
     upb = lv(x0)
     lwb = lv(x1)
     lv_inv = inverse(function(v) lv_qt(mdl, calib_x, v, alpha, cens_rt), x0, x1)
-    
+
     if(data_calib$event[i_calib]==0){
       if(data_calib$C[i_calib] >= upb){
         pts_row[1] <- pts_row[2] <- x0
@@ -207,7 +223,7 @@ v_pts_qt = function(mdl,
         pts_row[1] <- pts_row[2] <- lv_inv(data_calib$C[i_calib])$root
       }
     }
-    
+
     if(data_calib$event[i_calib]==1){
       if(data_calib$C[i_calib] >= upb){
         pts_row[1] <- x0
@@ -230,7 +246,7 @@ v_pts_qt = function(mdl,
     }
     return(pts_row)
   }, mc.cores = n_threads)
-  
+
   # Bind the list of rows into an N x 2 matrix
   pts <- do.call(rbind, res_list)
   return(pts)
@@ -240,7 +256,7 @@ v_pts_qt = function(mdl,
 v_pts_qct = function(mdl, qc_mdl,
                      data_fit, data_calib,
                      xnames, alpha, cens_rt){
-  
+
   library(parallel)
   if (.Platform$OS.type == "windows") {
     n_threads <- 1
@@ -252,26 +268,26 @@ v_pts_qct = function(mdl, qc_mdl,
   calib_x_full = data_calib[, xnames, drop = FALSE]
   names(calib_x_full) = xnames
   qc_preds <- predict(qc_mdl, calib_x_full, cens_rt)$predictions[,1]
-  
+
   # Process all rows in parallel
   res_list <- mclapply(1:nrow(data_calib), function(i_calib) {
     pts_row <- c(0, 0)
-    
+
     calib_x = data_calib[i_calib, xnames, drop = FALSE]
     names(calib_x) = xnames
-    
+
     # Call the simplified lv_qct
     lv = function(v) lv_qct(mdl, calib_x, v, alpha, qc_preds[i_calib])
-    
+
     x0 = 0.02
     x1 = 0.95
     upb = lv(x0)
     lwb = lv(x1)
-    
+
     # FIX: Just pass 'lv' directly into inverse! 
     # This prevents the root finder from calling the Random Forest again.
     lv_inv = inverse(lv, x0, x1)
-    
+
     if(data_calib$event[i_calib]==0){
       if(data_calib$C[i_calib] >= upb){
         pts_row[1] <- pts_row[2] <- x0
@@ -283,7 +299,7 @@ v_pts_qct = function(mdl, qc_mdl,
         pts_row[1] <- pts_row[2] <- lv_inv(data_calib$C[i_calib])$root
       }
     }
-    
+
     if(data_calib$event[i_calib]==1){
       if(data_calib$C[i_calib] >= upb){
         pts_row[1] <- x0
@@ -306,7 +322,7 @@ v_pts_qct = function(mdl, qc_mdl,
     }
     return(pts_row)
   }, mc.cores = n_threads)
-  
+
   # Bind the list of rows into an N x 2 matrix
   pts <- do.call(rbind, res_list)
   return(pts)

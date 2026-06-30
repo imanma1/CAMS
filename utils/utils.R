@@ -222,3 +222,115 @@ inverse <- function(f, lower, upper){
     uniroot(function(x){f(x) - y}, lower = lower, upper = upper, tol=1e-5)[1]
   }
 }
+
+make_oracle_sc_model <- function(setting) {
+  structure(
+    list(
+      setting = setting,
+      sigma_c = 0.5
+    ),
+    class = "oracle_sc"
+  )
+}
+
+
+mu_c_oracle <- function(X, setting) {
+  X <- as.data.frame(X)
+
+  if (setting == "homo_cens") {
+    mu_c <- rep(3.0, nrow(X))
+
+  } else if (setting == "cov_cens") {
+    mu_c <- 2.5 + 1.2 * X$X2
+
+  } else if (setting == "prot_cens") {
+    mu_c <- 3.0 - 1.5 * X$X1
+
+  } else if (setting == "heavy_prot_cens") {
+    mu_c <- 3.5 - 2.8 * X$X1
+
+  } else if (setting == "heavy_inter_cens") {
+    mu_c <- 3.5 - 2.8 * ((X$X1 == 1) & (X$X2 > 0))
+
+  } else if (setting == "surv_misspec") {
+    mu_c <- 2.5 + 0.5 * X$X2
+
+  } else if (setting == "cens_misspec") {
+    mu_c <- 2.5 +
+      (X$X2^2) * X$X1 +
+      cos(X$X3) +
+      0.2 * rowSums(X[, paste0("X", 4:10), drop = FALSE]^2)
+
+  } else if (setting == "simul_misspec") {
+    mu_c <- 2.5 +
+      (X$X3^2) -
+      1.5 * X$X1 +
+      0.1 * rowSums(abs(X[, paste0("X", 4:10), drop = FALSE]))
+
+  } else if (setting == "complex_surv") {
+    mu_c <- rep(3.0, nrow(X))
+
+  } else if (setting == "var_shift_heavy_cens") {
+    mu_c <- 3.0 + 0.5 * X$X2 - 2.8 * X$X1
+
+  } else if (setting == "starve_hetero") {
+    mu_c <- 3.0 - 1.5 * X$X1
+
+  } else if (setting == "starve_hetero_high_dim") {
+    mu_c <- 3.0 - 1.5 * X$X1
+
+  } else {
+    stop(sprintf("Unknown setting for oracle S_C: %s", setting))
+  }
+
+  as.numeric(mu_c)
+}
+
+
+oracle_sc_prob <- function(oracle_mdl, data, t) {
+  X <- as.data.frame(data)
+
+  mu_c <- mu_c_oracle(X, oracle_mdl$setting)
+  sigma_c <- oracle_mdl$sigma_c
+
+  if (is.matrix(t)) {
+    mu_mat <- matrix(mu_c, nrow = length(mu_c), ncol = ncol(t))
+    pr <- 1 - pnorm((log(t) - mu_mat) / sigma_c)
+    pr[t <= 0] <- 1
+  } else {
+    if (length(t) == 1) {
+      t <- rep(t, length(mu_c))
+    }
+
+    pr <- 1 - pnorm((log(t) - mu_c) / sigma_c)
+    pr[t <= 0] <- 1
+  }
+
+  pr
+}
+
+
+sc_prob <- function(mdl0, data, xnames, t) {
+  if (inherits(mdl0, "oracle_sc")) {
+    return(oracle_sc_prob(mdl0, data, t))
+  }
+
+  Xmat <- as.matrix(data[, xnames, drop = FALSE])
+
+  gpr_mean <- mdl0$predict(Xmat)
+  gpr_sd <- mdl0$predict(Xmat, se.fit = TRUE)$se
+
+  if (is.matrix(t)) {
+    mean_mat <- matrix(gpr_mean, nrow = length(gpr_mean), ncol = ncol(t))
+    sd_mat <- matrix(gpr_sd, nrow = length(gpr_sd), ncol = ncol(t))
+    pr <- pnorm((-t - mean_mat) / sd_mat)
+  } else {
+    if (length(t) == 1) {
+      t <- rep(t, length(gpr_mean))
+    }
+
+    pr <- pnorm((-t - gpr_mean) / gpr_sd)
+  }
+
+  pr
+}
