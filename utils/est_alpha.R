@@ -43,14 +43,32 @@ alpha_qt <- function(mdl, newdata, data_fit, data_calib, xnames, alpha, len_x, m
   sum_den <- colSums(weight_mat * ind2_mat)
 
   alpha_v_list <- sum_num / sum_den
-  alpha_v_list[sum_den == 0 | is.na(alpha_v_list)] <- 1
+
+  bad_alpha <- is.na(alpha_v_list) |
+    is.nan(alpha_v_list) |
+    !is.finite(alpha_v_list) |
+    is.na(sum_den) |
+    is.nan(sum_den) |
+    !is.finite(sum_den) |
+    sum_den == 0
+
+  alpha_v_list[bad_alpha] <- 1
 
   # monotonize alpha
   alpha_v <- monot(alpha_v_list)
-  if(sum(alpha_v <= alpha) == 0) {
-    v_hat_l = NULL
+
+  bad_alpha_v <- is.na(alpha_v) |
+    is.nan(alpha_v) |
+    !is.finite(alpha_v)
+
+  alpha_v[bad_alpha_v] <- 1
+
+  feasible_idx <- which(alpha_v <= alpha)
+
+  if (length(feasible_idx) == 0) {
+    v_hat_l <- NULL
   } else {
-    v_hat_l <- min(v_list[alpha_v <= alpha])
+    v_hat_l <- min(v_list[feasible_idx])
   }
 
   # === OPTIMIZATION 2: VECTORIZE PREDICTION ===
@@ -124,25 +142,44 @@ alpha_qct <- function(mdl, qc_mdl, newdata, data_fit, data_calib, xnames, alpha,
   sum_den <- colSums(weight_mat * ind2_mat)
 
   alpha_v_list <- sum_num / sum_den
-  alpha_v_list[sum_den == 0 | is.na(alpha_v_list)] <- 1
+
+  bad_alpha <- is.na(alpha_v_list) |
+    is.nan(alpha_v_list) |
+    !is.finite(alpha_v_list) |
+    is.na(sum_den) |
+    is.nan(sum_den) |
+    !is.finite(sum_den) |
+    sum_den == 0
+
+  alpha_v_list[bad_alpha] <- 1
+
   # monotonize alpha
   alpha_v <- monot(alpha_v_list)
-  if(sum(alpha_v <= alpha) == 0) {
-    v_hat_l = NULL
-  }else{
-    v_hat_l <- min(v_list[alpha_v <= alpha])
+
+  bad_alpha_v <- is.na(alpha_v) |
+    is.nan(alpha_v) |
+    !is.finite(alpha_v)
+
+  alpha_v[bad_alpha_v] <- 1
+
+  feasible_idx <- which(alpha_v <= alpha)
+
+  if (length(feasible_idx) == 0) {
+    v_hat_l <- NULL
+  } else {
+    v_hat_l <- min(v_list[feasible_idx])
   }
-  
+
   # === OPTIMIZATION 4: PRE-COMPUTE RF FOR TEST DATA ===
   if (is.null(v_hat_l)) {
     lower_bnd_l <- rep(0, len_x)
   } else {
     newdata_x <- newdata[, xnames, drop = FALSE]
     newdata_qc_preds <- predict(qc_mdl, newdata_x, cens_rt)$predictions[,1]
-    
+
     # Pass the pre-computed test predictions
     lower_bnd_l <- as.numeric(lv_qct(mdl, newdata, v_hat_l, alpha, newdata_qc_preds))
-    
+
     # Safety net: If the function somehow still returns a scalar, expand it
     if (length(lower_bnd_l) == 1) {
       lower_bnd_l <- rep(lower_bnd_l, len_x)

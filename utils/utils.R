@@ -279,6 +279,29 @@ mu_c_oracle <- function(X, setting) {
   } else if (setting == "starve_hetero_high_dim") {
     mu_c <- 3.0 - 1.5 * X$X1
 
+  } else if (setting == "high_survival_heavy_cens") {
+    mu_c <- 3.40 -
+      0.50 * X$X2 +
+      0.20 * X$X3 -
+      0.80 * X$X1
+
+  } else if (setting == "anti_aligned_cens") {
+    mu_c <- 2.80 -
+      0.70 * X$X2 +
+      0.50 * X$X3 -
+      0.80 * X$X1
+
+  } else if (setting == "weibull_aft_anti_cens") {
+    mu_c <- 3.30 -
+      0.60 * X$X2 +
+      0.40 * X$X3 -
+      0.80 * X$X1
+
+  } else if (setting == "moderate_inter_cens") {
+    mu_c <- 3.00 -
+      0.40 * ((X$X2 > 0) & (X$X3 < 0)) -
+      0.60 * X$X1 +
+      0.20 * X$X4
   } else {
     stop(sprintf("Unknown setting for oracle S_C: %s", setting))
   }

@@ -34,7 +34,7 @@ model_generating_fun <- function(n_train, n_calib, n_test,
     p <- 2
     gen_t <- function(x) exp(2 + 0.5 * x[,2] + 0.5 * rnorm(nrow(x)))
     # R automatically coerces the boolean (x[,1]==1 & x[,2]>0) into 1s and 0s
-    gen_c <- function(x) exp(3.5 - 2.8 * (x[,1] == 1 & x[,2] > 0) + 0.5 * rnorm(nrow(x)))
+    gen_c <- function(x) exp(3.5 - 1.8 * (x[,1] == 1 & x[,2] > 0) + 0.5 * rnorm(nrow(x)))
 
   } else if (setting == "surv_misspec") {
     # Setting (vi): Survival-model misspecification
@@ -117,6 +117,115 @@ model_generating_fun <- function(n_train, n_calib, n_test,
       exp(3.0 - 1.5 * x[,1] + 0.5 * rnorm(nrow(x)))
     }
 
+  } else if (setting == "high_survival_heavy_cens") {
+
+    # Long-survival protected group, but that group is more heavily censored
+    p <- 3
+
+    # X1 = 1 has genuinely longer survival
+    gen_t <- function(x) {
+      exp(
+        2.0 +
+        0.60 * x[, 2] -
+        0.30 * x[, 3] +
+        0.70 * x[, 1] +
+        0.50 * rnorm(nrow(x))
+      )
+    }
+
+    # X1 = 1 is censored earlier.
+    # High X2 also means higher T but earlier C.
+    gen_c <- function(x) {
+      exp(
+        3.40 -
+        0.50 * x[, 2] +
+        0.20 * x[, 3] -
+        0.80 * x[, 1] +
+        0.50 * rnorm(nrow(x))
+      )
+    }
+  } else if (setting == "anti_aligned_cens") {
+
+    p <- 5
+
+    gen_t <- function(x) {
+      sigma_t <- 0.45 + 0.20 * x[, 1]
+
+      exp(
+        2.0 +
+        0.70 * x[, 2] -
+        0.50 * x[, 3] +
+        0.25 * x[, 4] -
+        0.40 * x[, 1] +
+        sigma_t * rnorm(nrow(x))
+      )
+    }
+
+    gen_c <- function(x) {
+      exp(
+        2.80 -
+        0.70 * x[, 2] +
+        0.50 * x[, 3] -
+        0.80 * x[, 1] +
+        0.50 * rnorm(nrow(x))
+      )
+    }
+  } else if (setting == "weibull_aft_anti_cens") {
+
+    p <- 5
+
+    gen_t <- function(x) {
+
+      # Minimum extreme-value error used by a Weibull AFT model
+      eps_t <- log(-log(runif(nrow(x))))
+
+      exp(
+        2.0 +
+        0.70 * x[, 2] -
+        0.50 * x[, 3] +
+        0.30 * x[, 4] +
+        0.60 * x[, 1] +
+        0.45 * eps_t
+      )
+    }
+
+    gen_c <- function(x) {
+      exp(
+        3.30 -
+        0.60 * x[, 2] +
+        0.40 * x[, 3] -
+        0.80 * x[, 1] +
+        0.50 * rnorm(nrow(x))
+      )
+    } 
+  } else if (setting == "moderate_inter_cens") {
+
+    p <- 5
+
+    gen_t <- function(x) {
+      exp(
+        2.0 +
+        0.65 * x[, 2] -
+        0.45 * x[, 3] +
+        0.25 * x[, 4] -
+        0.30 * x[, 1] +
+        0.50 * rnorm(nrow(x))
+      )
+    }
+
+    hard_region <- function(x) {
+      (x[, 2] > 0) & (x[, 3] < 0)
+    }
+
+    gen_c <- function(x) {
+      exp(
+        3.00 -
+        0.40 * hard_region(x) -
+        0.60 * x[, 1] +
+        0.20 * x[, 4] +
+        0.50 * rnorm(nrow(x))
+      )
+    }
   } else {
     stop(sprintf("Unknown setting: %s", setting))
   }

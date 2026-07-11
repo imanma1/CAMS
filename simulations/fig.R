@@ -309,3 +309,9 @@ make_plots <- function(results_dir = "../results",
 
   cat("\nAll detected settings processed successfully!\n")
 }
+
+# bernoulli_prob <- 0.1
+# alpha <- 0.1
+# make_plots(results_dir = sprintf("../new_results%s", as.character(bernoulli_prob)),
+#            plots_dir = sprintf("../new_plots%s", as.character(bernoulli_prob)),
+#            target_alpha = alpha)

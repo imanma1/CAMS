@@ -4,7 +4,13 @@ total_start_time <- proc.time()[3]
 ########################################
 args <- commandArgs(trailingOnly = TRUE)
 setting_list <- unlist(strsplit(args[1], ","))
-# setting_list <- c("starve_hetero_high_dim")
+# setting_list <- c("heavy_inter_cens")
+# setting_list <- c(
+#   "high_survival_heavy_cens",
+#   "anti_aligned_cens",
+#   "weibull_aft_anti_cens",
+#   "moderate_inter_cens"
+# )
 
 seed <- as.integer(args[2])
 if (is.na(seed)) {
@@ -13,7 +19,7 @@ if (is.na(seed)) {
 
 use_oracle_sc <- as.logical(as.integer(args[3]))
 if (is.na(use_oracle_sc)) {
-  use_oracle_sc <- FALSE
+  use_oracle_sc <- TRUE
 }
 
 only_cams <- as.logical(as.integer(args[4]))
@@ -54,9 +60,9 @@ n_train <- n
 n_calib <- n
 xmin <- -2
 xmax <- 2
-bernoulli_prob <- 0.1
+bernoulli_prob <- 0.3
 
-num_runs <- 5
+num_runs <- 10
 
 # Detect cores just to print a helpful message (the actual multithreading happens inside the utils scripts)
 slurm_cores <- as.numeric(Sys.getenv("SLURM_CPUS_PER_TASK"))
@@ -100,8 +106,8 @@ for (i in 1:num_runs) {
 }
 
 # plots_dir <- sprintf("../plots%s", as.character(bernoulli_prob))
-# make_plots(results_dir = run_folder,
-#            plots_dir = plots_dir,
-#            target_alpha = alpha)
+make_plots(results_dir = sprintf("../new_results%s", as.character(bernoulli_prob)),
+           plots_dir = sprintf("../new_plots%s", as.character(bernoulli_prob)),
+           target_alpha = alpha)
 
 cat(sprintf("\nCompleted in %.2f seconds.\n", proc.time()[3] - total_start_time))

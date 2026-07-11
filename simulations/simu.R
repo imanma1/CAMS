@@ -276,6 +276,27 @@ simu <- function(seed, setting, only_cams = FALSE,
   time_cams <- proc.time()[3] - start_time_cams
   cat(sprintf("CAMS trained in %.2f seconds.\n", time_cams))
 
+  # start_time_cams <- proc.time()[3]
+  # local_cams_res <- new_cams(
+  #   x = data_test[, xnames, drop = FALSE],
+  #   p = p,
+  #   len_x = nrow(data_test),
+  #   xnames = xnames,
+  #   data_fit = data_fit,
+  #   data_calib = data_calib,
+  #   mdl0 = res_joint$mdl0,
+  #   alpha = alpha,
+  #   use_oracle_sc = use_oracle_sc
+  # )
+  # local_time_cams <- proc.time()[3] - start_time_cams
+  # cat(sprintf("Local CAMS trained in %.2f seconds.\n", local_time_cams))
+
+  # save_local_cams_info_allseeds(
+  #   cams_res = local_cams_res,
+  #   setting = setting,
+  #   seed = seed
+  # )
+
   compute_metrics <- function(output_df, times_vec = NULL, suffix_label = NULL) {
 
     method_names <- colnames(output_df)
@@ -334,6 +355,12 @@ simu <- function(seed, setting, only_cams = FALSE,
     times_vec = time_cams,
     suffix_label = NULL
   )
+
+  # local_df_cams <- compute_metrics(
+  #   local_cams_res$output,
+  #   times_vec = local_time_cams,
+  #   suffix_label = NULL
+  # )
   
   ########################################
   ## Compute & Bind Final Results
@@ -352,9 +379,263 @@ simu <- function(seed, setting, only_cams = FALSE,
     # Append CAMS to the final CSV output
     simu_out <- rbind(df_cams, df_joint, df_subgroup)
   } else {
+    # simu_out <- rbind(df_cams, local_df_cams)
     simu_out <- df_cams
   }
 
   rownames(simu_out) <- NULL
   return(simu_out)
+}
+
+save_local_cams_info_allseeds <- function(cams_res,
+                                          setting,
+                                          seed) {
+
+  diag_dir <- file.path("../local_cams_diagnostics")
+  dir.create(diag_dir, recursive = TRUE, showWarnings = FALSE)
+
+  lambda_file <- file.path(diag_dir, "selected_lambdas_all.csv")
+  risk_file <- file.path(diag_dir, "selected_risks_all.csv")
+  diagnostics_file <- file.path(diag_dir, "cell_diagnostics_all.csv")
+  summary_file <- file.path(diag_dir, "local_cams_summary_all.csv")
+
+  write_replace_seed <- function(new_df, file) {
+    if (nrow(new_df) == 0) {
+      return(invisible(NULL))
+    }
+
+    if (file.exists(file)) {
+      old_df <- read.csv(file, stringsAsFactors = FALSE)
+
+      # Remove old rows for this same setting and seed, so reruns do not duplicate
+      old_df <- old_df[!(old_df$setting == setting & old_df$seed == seed), , drop = FALSE]
+
+      common_cols <- union(names(old_df), names(new_df))
+
+      for (cc in setdiff(common_cols, names(old_df))) old_df[[cc]] <- NA
+      for (cc in setdiff(common_cols, names(new_df))) new_df[[cc]] <- NA
+
+      old_df <- old_df[, common_cols, drop = FALSE]
+      new_df <- new_df[, common_cols, drop = FALSE]
+
+      out_df <- rbind(old_df, new_df)
+    } else {
+      out_df <- new_df
+    }
+
+    write.csv(out_df, file, row.names = FALSE)
+  }
+
+  # --------------------------------------------------
+  # 1. Selected lambdas, long format
+  # --------------------------------------------------
+  lambda_rows <- list()
+
+  if (!is.null(cams_res$selected_lambdas)) {
+    for (group_name in names(cams_res$selected_lambdas)) {
+
+      group_obj <- cams_res$selected_lambdas[[group_name]]
+
+      if (is.null(group_obj)) next
+
+      for (method_name in names(group_obj)) {
+
+        lambda_vec <- group_obj[[method_name]]
+
+        if (is.null(lambda_vec)) {
+          lambda_rows[[length(lambda_rows) + 1]] <- data.frame(
+            setting = setting,
+            seed = seed,
+            group = group_name,
+            method = method_name,
+            cell = NA_character_,
+            lambda = NA_real_
+          )
+        } else {
+          lambda_rows[[length(lambda_rows) + 1]] <- data.frame(
+            setting = setting,
+            seed = seed,
+            group = group_name,
+            method = method_name,
+            cell = names(lambda_vec),
+            lambda = as.numeric(lambda_vec),
+            row.names = NULL
+          )
+        }
+      }
+    }
+  }
+
+  lambda_df <- if (length(lambda_rows) > 0) {
+    do.call(rbind, lambda_rows)
+  } else {
+    data.frame()
+  }
+
+  write_replace_seed(lambda_df, lambda_file)
+
+  # --------------------------------------------------
+  # 2. Selected risks, long format
+  # --------------------------------------------------
+  risk_rows <- list()
+
+  if (!is.null(cams_res$selected_risks)) {
+    for (group_name in names(cams_res$selected_risks)) {
+
+      group_obj <- cams_res$selected_risks[[group_name]]
+
+      if (is.null(group_obj)) next
+
+      for (method_name in names(group_obj)) {
+
+        risk_obj <- group_obj[[method_name]]
+
+        if (is.null(risk_obj)) {
+          risk_rows[[length(risk_rows) + 1]] <- data.frame(
+            setting = setting,
+            seed = seed,
+            group = group_name,
+            method = method_name,
+            risk_name = NA_character_,
+            risk_value = NA_real_
+          )
+
+        } else {
+          risk_vec <- unlist(risk_obj)
+
+          risk_rows[[length(risk_rows) + 1]] <- data.frame(
+            setting = setting,
+            seed = seed,
+            group = group_name,
+            method = method_name,
+            risk_name = names(risk_vec),
+            risk_value = as.numeric(risk_vec),
+            row.names = NULL
+          )
+        }
+      }
+    }
+  }
+
+  risk_df <- if (length(risk_rows) > 0) {
+    do.call(rbind, risk_rows)
+  } else {
+    data.frame()
+  }
+
+  write_replace_seed(risk_df, risk_file)
+
+  # --------------------------------------------------
+  # 3. Cell diagnostics
+  # --------------------------------------------------
+  diag_rows <- list()
+
+  if (!is.null(cams_res$diagnostics)) {
+    for (group_name in names(cams_res$diagnostics)) {
+
+      diag_df <- cams_res$diagnostics[[group_name]]
+
+      if (is.null(diag_df) || nrow(diag_df) == 0) next
+
+      diag_df$setting <- setting
+      diag_df$seed <- seed
+      diag_df$group <- group_name
+
+      first_cols <- c("setting", "seed", "group")
+      diag_df <- diag_df[, c(first_cols, setdiff(names(diag_df), first_cols)), drop = FALSE]
+
+      diag_rows[[length(diag_rows) + 1]] <- diag_df
+    }
+  }
+
+  diagnostics_df <- if (length(diag_rows) > 0) {
+    do.call(rbind, diag_rows)
+  } else {
+    data.frame()
+  }
+
+  write_replace_seed(diagnostics_df, diagnostics_file)
+
+  # --------------------------------------------------
+  # 4. Summary file, one row per seed/group/method
+  # --------------------------------------------------
+  summary_rows <- list()
+
+  if (!is.null(cams_res$selected_lambdas)) {
+    for (group_name in names(cams_res$selected_lambdas)) {
+
+      lambda_group <- cams_res$selected_lambdas[[group_name]]
+      risk_group <- cams_res$selected_risks[[group_name]]
+
+      if (is.null(lambda_group)) next
+
+      for (method_name in names(lambda_group)) {
+
+        lambda_vec <- lambda_group[[method_name]]
+
+        lambda_x2_le <- NA_real_
+        lambda_x2_gt <- NA_real_
+
+        if (!is.null(lambda_vec)) {
+          if ("X2<=0" %in% names(lambda_vec)) {
+            lambda_x2_le <- as.numeric(lambda_vec["X2<=0"])
+          }
+          if ("X2>0" %in% names(lambda_vec)) {
+            lambda_x2_gt <- as.numeric(lambda_vec["X2>0"])
+          }
+        }
+
+        group_risk <- NA_real_
+        cell_risk_le <- NA_real_
+        cell_risk_gt <- NA_real_
+
+        if (!is.null(risk_group) && method_name %in% names(risk_group)) {
+          risk_obj <- risk_group[[method_name]]
+
+          if (!is.null(risk_obj)) {
+            risk_vec <- unlist(risk_obj)
+
+            if ("group_risk" %in% names(risk_vec)) {
+              group_risk <- as.numeric(risk_vec["group_risk"])
+            }
+
+            if ("cell_risk_X2<=0" %in% names(risk_vec)) {
+              cell_risk_le <- as.numeric(risk_vec["cell_risk_X2<=0"])
+            }
+
+            if ("cell_risk_X2>0" %in% names(risk_vec)) {
+              cell_risk_gt <- as.numeric(risk_vec["cell_risk_X2>0"])
+            }
+          }
+        }
+
+        summary_rows[[length(summary_rows) + 1]] <- data.frame(
+          setting = setting,
+          seed = seed,
+          group = group_name,
+          method = method_name,
+          lambda_X2_le = lambda_x2_le,
+          lambda_X2_gt = lambda_x2_gt,
+          group_risk = group_risk,
+          cell_risk_X2_le = cell_risk_le,
+          cell_risk_X2_gt = cell_risk_gt
+        )
+      }
+    }
+  }
+
+  summary_df <- if (length(summary_rows) > 0) {
+    do.call(rbind, summary_rows)
+  } else {
+    data.frame()
+  }
+
+  write_replace_seed(summary_df, summary_file)
+
+  invisible(list(
+    lambda_file = lambda_file,
+    risk_file = risk_file,
+    diagnostics_file = diagnostics_file,
+    summary_file = summary_file
+  ))
 }
