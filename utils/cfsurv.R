@@ -63,7 +63,7 @@ cfsurv <- function(x, p, len_x, xnames,
     pr_new <- res$pr_new
 
   } else {
-    res <- selection_c(
+    selection_res <- selection_c(
       data = data_fit,
       p = p,
       n = nrow(data_fit),
@@ -78,9 +78,30 @@ cfsurv <- function(x, p, len_x, xnames,
       use_oracle_sc = use_oracle_sc
     )
 
-    c <- res$c_opt
+    c <- selection_res$c_opt
 
-    res <- cox_censoring_prob(
+    if (
+      isTRUE(selection_res$selection_failed) ||
+      length(c) != 1L ||
+      is.na(c) ||
+      !is.finite(c)
+    ) {
+      warning(
+        paste0(
+          "cfsurv(): automatic cutoff selection failed. ",
+          "Returning NA predictions for this method."
+        )
+      )
+
+      return(list(
+        res = rep(NA_real_, len_x),
+        c = NA_real_,
+        selection_failed = TRUE,
+        selection_result = selection_res
+      ))
+    }
+
+    prob_res <- cox_censoring_prob(
       mdl0 = mdl0,
       calib = data_calib,
       test = newdata,
@@ -91,8 +112,8 @@ cfsurv <- function(x, p, len_x, xnames,
       use_oracle_sc = use_oracle_sc
     )
 
-    pr_calib <- res$pr_calib
-    pr_new <- res$pr_new
+    pr_calib <- prob_res$pr_calib
+    pr_new <- prob_res$pr_new
   }
 
   ## Computing the weight for the calibration data and the test data
@@ -111,7 +132,11 @@ cfsurv <- function(x, p, len_x, xnames,
                     ftol,
                     tol)
 
-  return(list(res = res, c = c))
+  return(list(
+    res = res,
+    c = c,
+    selection_failed = FALSE
+  ))
 }
 
 
