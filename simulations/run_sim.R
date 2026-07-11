@@ -60,7 +60,7 @@ n_train <- n
 n_calib <- n
 xmin <- -2
 xmax <- 2
-bernoulli_prob <- 0.3
+bernoulli_prob <- 0.1
 
 num_runs <- 10
 
@@ -106,8 +106,8 @@ for (i in 1:num_runs) {
 }
 
 # plots_dir <- sprintf("../plots%s", as.character(bernoulli_prob))
-make_plots(results_dir = sprintf("../new_results%s", as.character(bernoulli_prob)),
-           plots_dir = sprintf("../new_plots%s", as.character(bernoulli_prob)),
+make_plots(results_dir = sprintf("../results%s", as.character(bernoulli_prob)),
+           plots_dir = sprintf("../plots%s", as.character(bernoulli_prob)),
            target_alpha = alpha)
 
 cat(sprintf("\nCompleted in %.2f seconds.\n", proc.time()[3] - total_start_time))

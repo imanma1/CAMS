@@ -302,6 +302,49 @@ mu_c_oracle <- function(X, setting) {
       0.40 * ((X$X2 > 0) & (X$X3 < 0)) -
       0.60 * X$X1 +
       0.20 * X$X4
+  } else if (setting == "cams_pool_calib_hd") {
+
+    p <- 75
+
+    beta <- 0.05 * rep(c(1, -1), length.out = p - 1)
+
+    score <- as.numeric(
+      as.matrix(
+        X[, paste0("X", 2:p), drop = FALSE]
+      ) %*% beta
+    )
+
+    mu_c <- 3.15 -
+      0.15 * X$X1 -
+      0.10 * score
+  } else if (setting == "cams_pool_calib_hd_mild") {
+
+    p <- 75
+    beta <- 0.05 * rep(c(1, -1), length.out = p - 1)
+
+    score <- as.numeric(
+      as.matrix(
+        X[, paste0("X", 2:p), drop = FALSE]
+      ) %*% beta
+    )
+
+    mu_c <- 3.20 -
+      0.10 * X$X1 -
+      0.08 * score
+  } else if (setting == "cams_pool_calib_hd_strong") {
+
+    p <- 75
+    beta <- 0.05 * rep(c(1, -1), length.out = p - 1)
+
+    score <- as.numeric(
+      as.matrix(
+        X[, paste0("X", 2:p), drop = FALSE]
+      ) %*% beta
+    )
+
+    mu_c <- 3.20 -
+      0.10 * X$X1 -
+      0.10 * score
   } else {
     stop(sprintf("Unknown setting for oracle S_C: %s", setting))
   }

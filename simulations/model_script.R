@@ -226,6 +226,136 @@ model_generating_fun <- function(n_train, n_calib, n_test,
         0.50 * rnorm(nrow(x))
       )
     }
+  } else if (setting == "cams_pool_calib_hd") {
+
+    # Rare minority + dense shared high-dimensional signal
+    # + group-specific survival scale
+    p <- 75
+
+    # All 74 ordinary covariates contribute to survival.
+    # The signal is shared by X1 = 0 and X1 = 1.
+    beta <- 0.05 * rep(c(1, -1), length.out = p - 1)
+
+    dense_score <- function(x) {
+      as.numeric(
+        as.matrix(x[, 2:p, drop = FALSE]) %*% beta
+      )
+    }
+
+    gen_t <- function(x) {
+
+      score <- dense_score(x)
+
+      # Standard extreme-value noise, matching survreg(dist = "weibull")
+      u <- runif(nrow(x))
+      u <- pmin(pmax(u, 1e-12), 1 - 1e-12)
+      eps_t <- log(-log(u))
+
+      # Majority has a narrow survival distribution.
+      # Minority has a substantially wider survival distribution.
+      sigma_t <- ifelse(x[, 1] == 1, 0.95, 0.35)
+
+      # The positive minority intercept keeps the minority's lower tail
+      # scientifically informative despite its greater variance.
+      mu_t <- 2.2 +
+        1.35 * x[, 1] +
+        score
+
+      exp(mu_t + sigma_t * eps_t)
+    }
+
+    gen_c <- function(x) {
+
+      score <- dense_score(x)
+
+      # Moderate rather than nearly complete censoring.
+      # Censoring is somewhat heavier in X1 = 1 and occurs earlier
+      # in regions where true survival tends to be longer.
+      exp(
+        3.15 -
+        0.15 * x[, 1] -
+        0.10 * score +
+        0.50 * rnorm(nrow(x))
+      )
+    }
+  } else if (setting == "cams_pool_calib_hd_mild") {
+
+    p <- 75
+
+    beta <- 0.05 * rep(c(1, -1), length.out = p - 1)
+
+    dense_score <- function(x) {
+      as.numeric(
+        as.matrix(x[, 2:p, drop = FALSE]) %*% beta
+      )
+    }
+
+    gen_t <- function(x) {
+
+      score <- dense_score(x)
+
+      u <- pmin(pmax(runif(nrow(x)), 1e-12), 1 - 1e-12)
+      eps_t <- log(-log(u))
+
+      sigma_t <- ifelse(x[, 1] == 1, 0.85, 0.35)
+
+      mu_t <- 2.2 +
+        1.13 * x[, 1] +
+        score
+
+      exp(mu_t + sigma_t * eps_t)
+    }
+
+    gen_c <- function(x) {
+
+      score <- dense_score(x)
+
+      exp(
+        3.20 -
+        0.10 * x[, 1] -
+        0.08 * score +
+        0.50 * rnorm(nrow(x))
+      )
+    }
+  } else if (setting == "cams_pool_calib_hd_strong") {
+
+    p <- 75
+
+    beta <- 0.05 * rep(c(1, -1), length.out = p - 1)
+
+    dense_score <- function(x) {
+      as.numeric(
+        as.matrix(x[, 2:p, drop = FALSE]) %*% beta
+      )
+    }
+
+    gen_t <- function(x) {
+
+      score <- dense_score(x)
+
+      u <- pmin(pmax(runif(nrow(x)), 1e-12), 1 - 1e-12)
+      eps_t <- log(-log(u))
+
+      sigma_t <- ifelse(x[, 1] == 1, 1.05, 0.35)
+
+      mu_t <- 2.2 +
+        1.58 * x[, 1] +
+        score
+
+      exp(mu_t + sigma_t * eps_t)
+    }
+
+    gen_c <- function(x) {
+
+      score <- dense_score(x)
+
+      exp(
+        3.20 -
+        0.10 * x[, 1] -
+        0.10 * score +
+        0.50 * rnorm(nrow(x))
+      )
+    }
   } else {
     stop(sprintf("Unknown setting: %s", setting))
   }

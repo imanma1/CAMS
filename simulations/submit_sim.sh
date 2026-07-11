@@ -25,7 +25,7 @@ module load r/4.5.0
 cd ~/scratch/CAMS/simulations
 
 
-SETTING_LIST="high_survival_heavy_cens,anti_aligned_cens,weibull_aft_anti_cens,moderate_inter_cens"
+SETTING_LIST="cams_pool_calib_hd_mild,cams_pool_calib_hd,cams_pool_calib_hd_strong"
 
 
 Rscript run_sim.R $SETTING_LIST $SLURM_ARRAY_TASK_ID 1 0
