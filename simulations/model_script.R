@@ -356,6 +356,228 @@ model_generating_fun <- function(n_train, n_calib, n_test,
         0.50 * rnorm(nrow(x))
       )
     }
+  } else if (setting == "cams_vs_vanilla_lower_tail_hd_mild") {
+
+    # Rare subgroup + high-dimensional shared survival pattern
+    p <- 75
+
+    beta_dense <- 0.03 * rep(
+      c(1, -1),
+      length.out = p - 4
+    )
+
+    dense_score <- function(x) {
+      as.numeric(
+        as.matrix(x[, 5:p, drop = FALSE]) %*% beta_dense
+      )
+    }
+
+    mu_t_fun <- function(x) {
+      2.8 +
+        0.40 * x[, 1] +
+        0.60 * x[, 2] -
+        0.50 * x[, 3] +
+        0.30 * x[, 4] +
+        dense_score(x)
+    }
+
+    sigma_t_fun <- function(x) {
+      0.28 + 0.17 * x[, 1]
+    }
+
+    gen_t <- function(x) {
+
+      # Extreme-value error:
+      # log(T) follows a Weibull AFT model compatible with survreg.
+      u <- pmin(
+        pmax(runif(nrow(x)), 1e-12),
+        1 - 1e-12
+      )
+
+      eps_t <- log(-log(u))
+
+      exp(
+        mu_t_fun(x) +
+          sigma_t_fun(x) * eps_t
+      )
+    }
+
+    gen_c <- function(x) {
+
+      mu_t <- mu_t_fun(x)
+
+      # Early censoring occurs for 15% of the majority
+      # and 20% of the minority.
+      prob_early <- 0.10 + 0.05 * x[, 1]
+
+      early <- rbinom(
+        nrow(x),
+        size = 1,
+        prob = prob_early
+      )
+
+      # Early component lies near/below the target lower tail.
+      mu_early <- mu_t - 1.00
+
+      # Late component usually lies well beyond the event time.
+      mu_late <- mu_t + 1.20
+
+      log_c <- ifelse(
+        early == 1,
+        mu_early + 0.25 * rnorm(nrow(x)),
+        mu_late + 0.40 * rnorm(nrow(x))
+      )
+
+      exp(log_c)
+    }
+  } else if (setting == "cams_vs_vanilla_lower_tail_hd_main") {
+
+    # Rare subgroup + high-dimensional shared survival pattern
+    p <- 75
+
+    beta_dense <- 0.03 * rep(
+      c(1, -1),
+      length.out = p - 4
+    )
+
+    dense_score <- function(x) {
+      as.numeric(
+        as.matrix(x[, 5:p, drop = FALSE]) %*% beta_dense
+      )
+    }
+
+    mu_t_fun <- function(x) {
+      2.8 +
+        0.40 * x[, 1] +
+        0.60 * x[, 2] -
+        0.50 * x[, 3] +
+        0.30 * x[, 4] +
+        dense_score(x)
+    }
+
+    sigma_t_fun <- function(x) {
+      0.28 + 0.17 * x[, 1]
+    }
+
+    gen_t <- function(x) {
+
+      # Extreme-value error:
+      # log(T) follows a Weibull AFT model compatible with survreg.
+      u <- pmin(
+        pmax(runif(nrow(x)), 1e-12),
+        1 - 1e-12
+      )
+
+      eps_t <- log(-log(u))
+
+      exp(
+        mu_t_fun(x) +
+          sigma_t_fun(x) * eps_t
+      )
+    }
+
+    gen_c <- function(x) {
+
+      mu_t <- mu_t_fun(x)
+
+      # Early censoring occurs for 15% of the majority
+      # and 20% of the minority.
+      prob_early <- 0.15 + 0.05 * x[, 1]
+
+      early <- rbinom(
+        nrow(x),
+        size = 1,
+        prob = prob_early
+      )
+
+      # Early component lies near/below the target lower tail.
+      mu_early <- mu_t - 1.30
+
+      # Late component usually lies well beyond the event time.
+      mu_late <- mu_t + 1.20
+
+      log_c <- ifelse(
+        early == 1,
+        mu_early + 0.25 * rnorm(nrow(x)),
+        mu_late + 0.40 * rnorm(nrow(x))
+      )
+
+      exp(log_c)
+    }
+  } else if (setting == "cams_vs_vanilla_lower_tail_hd_strong") {
+
+    # Rare subgroup + high-dimensional shared survival pattern
+    p <- 75
+
+    beta_dense <- 0.03 * rep(
+      c(1, -1),
+      length.out = p - 4
+    )
+
+    dense_score <- function(x) {
+      as.numeric(
+        as.matrix(x[, 5:p, drop = FALSE]) %*% beta_dense
+      )
+    }
+
+    mu_t_fun <- function(x) {
+      2.8 +
+        0.40 * x[, 1] +
+        0.60 * x[, 2] -
+        0.50 * x[, 3] +
+        0.30 * x[, 4] +
+        dense_score(x)
+    }
+
+    sigma_t_fun <- function(x) {
+      0.28 + 0.17 * x[, 1]
+    }
+
+    gen_t <- function(x) {
+
+      # Extreme-value error:
+      # log(T) follows a Weibull AFT model compatible with survreg.
+      u <- pmin(
+        pmax(runif(nrow(x)), 1e-12),
+        1 - 1e-12
+      )
+
+      eps_t <- log(-log(u))
+
+      exp(
+        mu_t_fun(x) +
+          sigma_t_fun(x) * eps_t
+      )
+    }
+
+    gen_c <- function(x) {
+
+      mu_t <- mu_t_fun(x)
+
+      # Early censoring occurs for 15% of the majority
+      # and 20% of the minority.
+      prob_early <- 0.20 + 0.05 * x[, 1]
+
+      early <- rbinom(
+        nrow(x),
+        size = 1,
+        prob = prob_early
+      )
+
+      # Early component lies near/below the target lower tail.
+      mu_early <- mu_t - 1.50
+
+      # Late component usually lies well beyond the event time.
+      mu_late <- mu_t + 1.20
+
+      log_c <- ifelse(
+        early == 1,
+        mu_early + 0.25 * rnorm(nrow(x)),
+        mu_late + 0.40 * rnorm(nrow(x))
+      )
+
+      exp(log_c)
+    }
   } else {
     stop(sprintf("Unknown setting: %s", setting))
   }

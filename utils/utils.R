@@ -354,25 +354,231 @@ mu_c_oracle <- function(X, setting) {
 
 
 oracle_sc_prob <- function(oracle_mdl, data, t) {
-  X <- as.data.frame(data)
 
-  mu_c <- mu_c_oracle(X, oracle_mdl$setting)
+  X <- as.data.frame(data)
+  setting <- oracle_mdl$setting
+
+  mixture_settings <- c(
+    "cams_vs_vanilla_lower_tail_hd_mild",
+    "cams_vs_vanilla_lower_tail_hd_main",
+    "cams_vs_vanilla_lower_tail_hd_strong"
+  )
+
+  # ==========================================================
+  # Special oracle for the two-component censoring mixtures
+  # ==========================================================
+  if (setting %in% mixture_settings) {
+
+    p <- 75
+
+    required_names <- paste0("X", 1:p)
+
+    missing_names <- setdiff(required_names, colnames(X))
+
+    if (length(missing_names) > 0) {
+      stop(
+        sprintf(
+          "Oracle mixture censoring model is missing columns: %s",
+          paste(missing_names, collapse = ", ")
+        )
+      )
+    }
+
+    beta_dense <- 0.03 * rep(
+      c(1, -1),
+      length.out = p - 4
+    )
+
+    dense_score <- as.numeric(
+      as.matrix(
+        X[, paste0("X", 5:p), drop = FALSE]
+      ) %*% beta_dense
+    )
+
+    mu_t <- 2.8 +
+      0.40 * X$X1 +
+      0.60 * X$X2 -
+      0.50 * X$X3 +
+      0.30 * X$X4 +
+      dense_score
+
+    if (setting == "cams_vs_vanilla_lower_tail_hd_mild") {
+
+      prob_early <- 0.10 + 0.05 * X$X1
+      early_offset <- 1.00
+
+    } else if (setting == "cams_vs_vanilla_lower_tail_hd_main") {
+
+      prob_early <- 0.15 + 0.05 * X$X1
+      early_offset <- 1.30
+
+    } else {
+
+      prob_early <- 0.20 + 0.05 * X$X1
+      early_offset <- 1.50
+    }
+
+    mu_early <- mu_t - early_offset
+    mu_late <- mu_t + 1.20
+
+    sigma_early <- 0.25
+    sigma_late <- 0.40
+
+    if (is.matrix(t)) {
+
+      if (nrow(t) != nrow(X)) {
+        stop(
+          sprintf(
+            "For matrix t, nrow(t) must equal nrow(data): %d versus %d.",
+            nrow(t),
+            nrow(X)
+          )
+        )
+      }
+
+      n <- nrow(X)
+      k <- ncol(t)
+
+      prob_early_mat <- matrix(
+        prob_early,
+        nrow = n,
+        ncol = k
+      )
+
+      mu_early_mat <- matrix(
+        mu_early,
+        nrow = n,
+        ncol = k
+      )
+
+      mu_late_mat <- matrix(
+        mu_late,
+        nrow = n,
+        ncol = k
+      )
+
+      t_safe <- pmax(t, .Machine$double.xmin)
+      log_t <- log(t_safe)
+
+      surv_early <- 1 - pnorm(
+        (log_t - mu_early_mat) / sigma_early
+      )
+
+      surv_late <- 1 - pnorm(
+        (log_t - mu_late_mat) / sigma_late
+      )
+
+      pr <- prob_early_mat * surv_early +
+        (1 - prob_early_mat) * surv_late
+
+      pr[t <= 0] <- 1
+
+    } else {
+
+      if (length(t) == 1) {
+        t <- rep(t, nrow(X))
+      }
+
+      if (length(t) != nrow(X)) {
+        stop(
+          sprintf(
+            "Length of t must equal nrow(data): %d versus %d.",
+            length(t),
+            nrow(X)
+          )
+        )
+      }
+
+      t_safe <- pmax(t, .Machine$double.xmin)
+      log_t <- log(t_safe)
+
+      surv_early <- 1 - pnorm(
+        (log_t - mu_early) / sigma_early
+      )
+
+      surv_late <- 1 - pnorm(
+        (log_t - mu_late) / sigma_late
+      )
+
+      pr <- prob_early * surv_early +
+        (1 - prob_early) * surv_late
+
+      pr[t <= 0] <- 1
+    }
+
+    pr[!is.finite(pr)] <- 0
+
+    return(
+      pmin(
+        pmax(pr, 0),
+        1
+      )
+    )
+  }
+
+  # ==========================================================
+  # Existing single-lognormal oracle settings
+  # ==========================================================
+  mu_c <- mu_c_oracle(X, setting)
   sigma_c <- oracle_mdl$sigma_c
 
   if (is.matrix(t)) {
-    mu_mat <- matrix(mu_c, nrow = length(mu_c), ncol = ncol(t))
-    pr <- 1 - pnorm((log(t) - mu_mat) / sigma_c)
+
+    if (nrow(t) != nrow(X)) {
+      stop(
+        sprintf(
+          "For matrix t, nrow(t) must equal nrow(data): %d versus %d.",
+          nrow(t),
+          nrow(X)
+        )
+      )
+    }
+
+    mu_mat <- matrix(
+      mu_c,
+      nrow = length(mu_c),
+      ncol = ncol(t)
+    )
+
+    t_safe <- pmax(t, .Machine$double.xmin)
+
+    pr <- 1 - pnorm(
+      (log(t_safe) - mu_mat) / sigma_c
+    )
+
     pr[t <= 0] <- 1
+
   } else {
+
     if (length(t) == 1) {
       t <- rep(t, length(mu_c))
     }
 
-    pr <- 1 - pnorm((log(t) - mu_c) / sigma_c)
+    if (length(t) != length(mu_c)) {
+      stop(
+        sprintf(
+          "Length of t must equal nrow(data): %d versus %d.",
+          length(t),
+          length(mu_c)
+        )
+      )
+    }
+
+    t_safe <- pmax(t, .Machine$double.xmin)
+
+    pr <- 1 - pnorm(
+      (log(t_safe) - mu_c) / sigma_c
+    )
+
     pr[t <= 0] <- 1
   }
 
-  pr
+  pr[!is.finite(pr)] <- 0
+
+  pmin(
+    pmax(pr, 0),
+    1
+  )
 }
 
 

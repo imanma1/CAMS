@@ -35,6 +35,50 @@ simu <- function(seed, setting, only_cams = FALSE,
   data_test <- data_obj$data_test
   T_test <- data_obj$T_test
 
+  if (
+    setting %in% c(
+      "cams_vs_vanilla_lower_tail_hd_mild",
+      "cams_vs_vanilla_lower_tail_hd_main",
+      "cams_vs_vanilla_lower_tail_hd_strong"
+    )
+  ) {
+
+    oracle_tmp <- make_oracle_sc_model(setting)
+
+    oracle_prob_at_observed_time <- sc_prob(
+      mdl0 = oracle_tmp,
+      data = data_calib,
+      xnames = xnames,
+      t = data_calib$censored_T
+    )
+
+    cat("\nOracle censoring probability diagnostics:\n")
+
+    print(
+      summary(
+        oracle_prob_at_observed_time
+      )
+    )
+
+    cat(
+      sprintf(
+        "Number of non-finite oracle probabilities: %d\n",
+        sum(!is.finite(oracle_prob_at_observed_time))
+      )
+    )
+
+    cat(
+      sprintf(
+        "Number outside [0,1]: %d\n",
+        sum(
+          oracle_prob_at_observed_time < 0 |
+            oracle_prob_at_observed_time > 1,
+          na.rm = TRUE
+        )
+      )
+    )
+  }
+
   ########################################
   ## Core Pipeline Helper Function
   ########################################
@@ -144,20 +188,102 @@ simu <- function(seed, setting, only_cams = FALSE,
         output[["DFT-fixed"]] <- res0$res
       }
 
-      # 4. vanilla CQR
-      cat("Training vanilla CQR...\n")
+      # ==========================================================
+      # 4. Vanilla CQR on the original time scale
+      # ==========================================================
+      cat("Training vanilla CQR on original scale...\n")
+
       start_time <- proc.time()[3]
-      res <- lapply(alpha, cqr,
-                    x = x_test,
-                    Xtrain = Xtrain,
-                    Ytrain = sub_data$censored_T,
-                    I_fit = 1:nrow(sub_fit),
-                    seed = seed + 7)
-      res <- do.call(rbind, lapply(res, as.data.frame))
-      output[["Vanilla CQR"]] <- res[, 1]
+
+      res_raw <- lapply(
+        alpha,
+        cqr,
+        x = x_test,
+        Xtrain = Xtrain,
+        Ytrain = sub_data$censored_T,
+        I_fit = seq_len(nrow(sub_fit)),
+        seed = seed + 7
+      )
+
+      res_raw <- do.call(
+        rbind,
+        lapply(res_raw, as.data.frame)
+      )
+
+      output[["Vanilla CQR"]] <- as.numeric(res_raw[, 1])
+
       vanilla_cqr_time <- proc.time()[3] - start_time
-      times <- c(times, vanilla_cqr_time)
-      cat(sprintf("Vanilla CQR trained in %.2f seconds.\n", vanilla_cqr_time))
+
+      times <- c(
+        times,
+        vanilla_cqr_time
+      )
+
+      cat(
+        sprintf(
+          "Vanilla CQR on original scale trained in %.2f seconds.\n",
+          vanilla_cqr_time
+        )
+      )
+
+
+      # ==========================================================
+      # 4b. Vanilla CQR on the log-time scale
+      # ==========================================================
+      cat("Training vanilla CQR on log scale...\n")
+
+      start_time <- proc.time()[3]
+
+      log_censored_time <- log(
+        pmax(
+          sub_data$censored_T,
+          .Machine$double.xmin
+        )
+      )
+
+      res_log <- lapply(
+        alpha,
+        cqr,
+        x = x_test,
+        Xtrain = Xtrain,
+        Ytrain = log_censored_time,
+        I_fit = seq_len(nrow(sub_fit)),
+        seed = seed + 17
+      )
+
+      res_log <- do.call(
+        rbind,
+        lapply(res_log, as.data.frame)
+      )
+
+      log_lower_bound <- as.numeric(res_log[, 1])
+
+      # Avoid numerical overflow before exponentiating
+      log_lower_bound <- pmin(
+        log_lower_bound,
+        log(.Machine$double.xmax)
+      )
+
+      log_lower_bound <- pmax(
+        log_lower_bound,
+        log(.Machine$double.xmin)
+      )
+
+      output[["Vanilla CQR-log"]] <- exp(log_lower_bound)
+
+      vanilla_cqr_log_time <- proc.time()[3] - start_time
+
+      times <- c(
+        times,
+        vanilla_cqr_log_time
+      )
+
+      cat(
+        sprintf(
+          "Vanilla CQR on log scale trained in %.2f seconds.\n",
+          vanilla_cqr_log_time
+        )
+      )
 
       # 5. Cox Model
       # cat("Training Cox Model...\n")
