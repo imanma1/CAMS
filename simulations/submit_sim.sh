@@ -28,4 +28,4 @@ cd ~/scratch/CAMS/simulations
 SETTING_LIST="cams_vs_vanilla_lower_tail_hd_mild,cams_vs_vanilla_lower_tail_hd_main,cams_vs_vanilla_lower_tail_hd_strong"
 
 
-Rscript run_sim.R $SETTING_LIST $SLURM_ARRAY_TASK_ID 1 0
+Rscript run_sim.R $SETTING_LIST $SLURM_ARRAY_TASK_ID 1 1

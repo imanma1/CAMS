@@ -425,6 +425,14 @@ simu <- function(seed, setting, only_cams = FALSE,
 
   compute_metrics <- function(output_df, times_vec = NULL, suffix_label = NULL) {
 
+    output_df[] <- lapply(
+      output_df,
+      function(z) {
+        z[is.finite(z)] <- pmax(z[is.finite(z)], 0)
+        z
+      }
+    )
+
     method_names <- colnames(output_df)
 
     if (!is.null(suffix_label)) {
