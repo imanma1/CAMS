@@ -2,9 +2,23 @@ simu <- function(seed, setting, only_cams = FALSE,
                  n_train, n_calib, n_test,
                  xmin, xmax, alpha,
                  bernoulli_prob = 0.1,
-                 use_oracle_sc = FALSE) {
+                 use_oracle_sc = FALSE,
+                 sc_method = NULL,
+                 augmentation_method = c("same", "correct", "wrong"),
+                 homoscedastic_event = FALSE,
+                 sc_ntree = 1000) {
   set.seed(seed)
   mod <- "cox"
+
+  if (is.null(sc_method)) {
+    sc_method <- if (isTRUE(use_oracle_sc)) "oracle" else "aft_lognormal"
+  }
+  sc_method <- match.arg(
+    sc_method,
+    c("oracle", "rsf", "aft_lognormal", "km_x1", "km")
+  )
+  augmentation_method <- match.arg(augmentation_method)
+  use_oracle_sc <- identical(sc_method, "oracle")
 
   n_threads <- 1
   if (.Platform$OS.type != "windows") {
@@ -17,14 +31,12 @@ simu <- function(seed, setting, only_cams = FALSE,
     omp_set_num_threads(n_threads)
   }
 
-  mdl0_dir <- sprintf("../saved_models%s", as.character(bernoulli_prob))
-  dir.create(mdl0_dir, showWarnings = FALSE, recursive = TRUE)
-
   ## Initialization
 
   ## Generate data according to the setting
   data_obj <- model_generating_fun(n_train, n_calib, n_test,
-                                   setting, xmin, xmax, bernoulli_prob)
+                                   setting, xmin, xmax, bernoulli_prob,
+                                   homoscedastic_event = homoscedastic_event)
 
   p <- data_obj$p
   xnames <- paste0("X", 1:p)
@@ -35,6 +47,18 @@ simu <- function(seed, setting, only_cams = FALSE,
   data_test <- data_obj$data_test
   T_test <- data_obj$T_test
 
+  cat(sprintf("Fitting censoring model: %s\n", sc_method))
+  start_time_sc <- proc.time()[3]
+  mdl0 <- fit_sc_model(
+    method = sc_method,
+    data_fit = data_fit,
+    xnames = xnames,
+    setting = setting,
+    ntree = sc_ntree
+  )
+  time_mdl0 <- proc.time()[3] - start_time_sc
+  cat(sprintf("Censoring model fitted in %.2f seconds.\n", time_mdl0))
+
   if (
     setting %in% c(
       "cams_vs_vanilla_lower_tail_hd_mild",
@@ -43,27 +67,25 @@ simu <- function(seed, setting, only_cams = FALSE,
     )
   ) {
 
-    oracle_tmp <- make_oracle_sc_model(setting)
-
-    oracle_prob_at_observed_time <- sc_prob(
-      mdl0 = oracle_tmp,
+    censoring_prob_at_observed_time <- sc_prob(
+      mdl0 = mdl0,
       data = data_calib,
       xnames = xnames,
       t = data_calib$censored_T
     )
 
-    cat("\nOracle censoring probability diagnostics:\n")
+    cat(sprintf("\n%s censoring probability diagnostics:\n", sc_method))
 
     print(
       summary(
-        oracle_prob_at_observed_time
+        censoring_prob_at_observed_time
       )
     )
 
     cat(
       sprintf(
-        "Number of non-finite oracle probabilities: %d\n",
-        sum(!is.finite(oracle_prob_at_observed_time))
+        "Number of non-finite censoring probabilities: %d\n",
+        sum(!is.finite(censoring_prob_at_observed_time))
       )
     )
 
@@ -71,8 +93,8 @@ simu <- function(seed, setting, only_cams = FALSE,
       sprintf(
         "Number outside [0,1]: %d\n",
         sum(
-          oracle_prob_at_observed_time < 0 |
-            oracle_prob_at_observed_time > 1,
+          censoring_prob_at_observed_time < 0 |
+            censoring_prob_at_observed_time > 1,
           na.rm = TRUE
         )
       )
@@ -93,32 +115,6 @@ simu <- function(seed, setting, only_cams = FALSE,
     x_test <- sub_test[, xnames_to_use, drop = FALSE]
     sub_data <- rbind(sub_fit, sub_calib)
     Xtrain <- sub_data[, xnames_to_use, drop = FALSE]
-
-    if (use_oracle_sc) {
-      mdl0 <- make_oracle_sc_model(setting)
-      time_mdl0 <- 0
-    } else {
-      mdl0_file <- file.path(mdl0_dir, sprintf("mdl0_%s_%s_seed_%d.rds", non_cams_mode, setting, seed))
-      if (file.exists(mdl0_file)) {
-        cat(sprintf("Found pre-trained mdl0 for %s seed %d. Loading...\n", setting, seed))
-        mdl0 <- readRDS(mdl0_file)
-        time_mdl0 <- 0
-      } else {
-        cat("Training mdl0...\n")
-        fit <- sub_fit
-        fit$C <- -fit$C
-        start_time <- proc.time()[3]
-        mdl0 <- GauPro::gpkm(X = as.matrix(fit[, xnames_to_use, drop=FALSE]), 
-                            Z = fit$C,
-                            kernel = "matern52",
-                            parallel = FALSE)
-        time_mdl0 <- proc.time()[3] - start_time
-        cat(sprintf("mdl0 trained in %.2f seconds.\n", time_mdl0))
-        # Save the newly trained model to the hard drive
-        saveRDS(mdl0, file = mdl0_file)
-        cat("Saved mdl0 to disk for future runs.\n")
-      }
-    }
 
     if (!only_cams) {
       # 2. cfsurv_c (qt and qct)
@@ -143,8 +139,8 @@ simu <- function(seed, setting, only_cams = FALSE,
       time_qt <- lb_res$time_qt
       time_qct <- lb_res$time_qct
       time_q_base <- time_q - (time_qt + time_qct)
-      time_qt <- time_qt + time_q_base + time_mdl0
-      time_qct <- time_qct + time_q_base + time_mdl0
+      time_qt <- time_qt + time_q_base
+      time_qct <- time_qct + time_q_base
 
       times <- c(time_qt, time_qct)
       output <- data.frame(
@@ -179,7 +175,7 @@ simu <- function(seed, setting, only_cams = FALSE,
       )
       raw_time_qc0 <- proc.time()[3] - start_time
       cat(sprintf("cfsurv (qc0) trained in %.2f seconds.\n", raw_time_qc0))
-      time_qc0 <- raw_time_qc0 + time_mdl0
+      time_qc0 <- raw_time_qc0
       times <- c(times, time_qc0)
       if (length(res0$res) == 0) {
         cat("  -> [WARNING] cfsurv returned empty predictions. Filling with NAs.\n")
@@ -397,9 +393,10 @@ simu <- function(seed, setting, only_cams = FALSE,
     data_calib = data_calib,
     mdl0 = res_joint$mdl0,
     alpha = alpha,
-    use_oracle_sc = use_oracle_sc
+    use_oracle_sc = use_oracle_sc,
+    augmentation_method = augmentation_method
   )
-  time_cams <- proc.time()[3] - start_time_cams
+  time_cams <- proc.time()[3] - start_time_cams + time_mdl0
   cat(sprintf("CAMS trained in %.2f seconds.\n", time_cams))
 
   # start_time_cams <- proc.time()[3]
@@ -423,7 +420,8 @@ simu <- function(seed, setting, only_cams = FALSE,
   #   seed = seed
   # )
 
-  compute_metrics <- function(output_df, times_vec = NULL, suffix_label = NULL) {
+  compute_metrics <- function(output_df, times_vec = NULL, suffix_label = NULL,
+                              calibration_diagnostics = NULL) {
 
     output_df[] <- lapply(
       output_df,
@@ -469,12 +467,16 @@ simu <- function(seed, setting, only_cams = FALSE,
       mean(x[idx_test_1], na.rm = TRUE)
     })
 
-    data.frame(
+    metrics <- data.frame(
       "method"                       = method_names,
       "setting"                      = setting,
+      "censoring model"              = sc_method,
+      "augmentation model"           = augmentation_method,
+      "event-time scale"             = if (homoscedastic_event) "constant" else "group-varying",
       "group coverage for x_1 = 0"   = cov_grp0,
       "group coverage for x_1 = 1"   = cov_grp1,
       "Marginal coverage"            = cov_marg,
+      "true test-set miscoverage"    = 1 - cov_marg,
       "lower bound mean for x_1 = 0" = simulen_grp0,
       "lower bound mean for x_1 = 1" = simulen_grp1,
       "lower bound values mean"      = simulen,
@@ -482,12 +484,86 @@ simu <- function(seed, setting, only_cams = FALSE,
       check.names = FALSE,
       row.names = NULL
     )
+
+    diagnostic_columns <- c(
+      "selected calibration level",
+      "selected calibration level for x_1 = 0",
+      "selected calibration level for x_1 = 1",
+      "estimated calibration risk",
+      "estimated calibration risk for x_1 = 0",
+      "estimated calibration risk for x_1 = 1",
+      "absolute calibration-to-test risk error",
+      "absolute calibration-to-test risk error for x_1 = 0",
+      "absolute calibration-to-test risk error for x_1 = 1",
+      "fraction of censoring probabilities truncated at eta"
+    )
+    metrics[diagnostic_columns] <- NA_real_
+
+    if (!is.null(calibration_diagnostics)) {
+      for (row_idx in seq_len(nrow(metrics))) {
+        method_name <- colnames(output_df)[row_idx]
+        method_diag <- calibration_diagnostics[
+          calibration_diagnostics$method == method_name,
+          ,
+          drop = FALSE
+        ]
+
+        if (nrow(method_diag) == 0L) next
+
+        diag0 <- method_diag[method_diag$subgroup == 0, , drop = FALSE]
+        diag1 <- method_diag[method_diag$subgroup == 1, , drop = FALSE]
+        valid_weight <- is.finite(method_diag$n_calib) & method_diag$n_calib > 0
+
+        if (any(valid_weight)) {
+          metrics[["selected calibration level"]][row_idx] <- weighted.mean(
+            method_diag$selected_calibration_level[valid_weight],
+            method_diag$n_calib[valid_weight],
+            na.rm = TRUE
+          )
+          metrics[["estimated calibration risk"]][row_idx] <- weighted.mean(
+            method_diag$estimated_calibration_risk[valid_weight],
+            method_diag$n_calib[valid_weight],
+            na.rm = TRUE
+          )
+          metrics[["fraction of censoring probabilities truncated at eta"]][row_idx] <- weighted.mean(
+            method_diag$fraction_censoring_probabilities_truncated[valid_weight],
+            method_diag$n_calib[valid_weight],
+            na.rm = TRUE
+          )
+        }
+
+        if (nrow(diag0) == 1L) {
+          metrics[["selected calibration level for x_1 = 0"]][row_idx] <- diag0$selected_calibration_level
+          metrics[["estimated calibration risk for x_1 = 0"]][row_idx] <- diag0$estimated_calibration_risk
+        }
+        if (nrow(diag1) == 1L) {
+          metrics[["selected calibration level for x_1 = 1"]][row_idx] <- diag1$selected_calibration_level
+          metrics[["estimated calibration risk for x_1 = 1"]][row_idx] <- diag1$estimated_calibration_risk
+        }
+
+        metrics[["absolute calibration-to-test risk error"]][row_idx] <- abs(
+          metrics[["estimated calibration risk"]][row_idx] -
+            metrics[["true test-set miscoverage"]][row_idx]
+        )
+        metrics[["absolute calibration-to-test risk error for x_1 = 0"]][row_idx] <- abs(
+          metrics[["estimated calibration risk for x_1 = 0"]][row_idx] -
+            (1 - cov_grp0[row_idx])
+        )
+        metrics[["absolute calibration-to-test risk error for x_1 = 1"]][row_idx] <- abs(
+          metrics[["estimated calibration risk for x_1 = 1"]][row_idx] -
+            (1 - cov_grp1[row_idx])
+        )
+      }
+    }
+
+    metrics
   }
 
   df_cams <- compute_metrics(
     cams_res$output,
     times_vec = time_cams,
-    suffix_label = NULL
+    suffix_label = NULL,
+    calibration_diagnostics = cams_res$diagnostics
   )
 
   # local_df_cams <- compute_metrics(

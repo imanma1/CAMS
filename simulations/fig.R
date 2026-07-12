@@ -266,6 +266,29 @@ make_plots <- function(results_dir = "../results",
     cat("  -> Detected methods in this order:\n")
     print(method_levels)
 
+    # Report means and across-seed standard deviations for every numeric metric.
+    numeric_cols <- names(all_data)[vapply(all_data, is.numeric, logical(1))]
+    summary_rows <- lapply(method_levels, function(method_name) {
+      method_data <- all_data[all_data$method == method_name, , drop = FALSE]
+      row <- data.frame(
+        method = method_name,
+        `number of seeds` = length(unique(method_data$source_seed)),
+        check.names = FALSE
+      )
+      for (metric_name in numeric_cols) {
+        values <- method_data[[metric_name]]
+        row[[paste0(metric_name, " mean")]] <- mean(values, na.rm = TRUE)
+        row[[paste0(metric_name, " sd across seeds")]] <- stats::sd(values, na.rm = TRUE)
+      }
+      row
+    })
+    summary_df <- do.call(rbind, summary_rows)
+    summary_name <- file.path(
+      plots_dir,
+      sprintf("%d. %s_summary.csv", plot_order, setting)
+    )
+    write.csv(summary_df, summary_name, row.names = FALSE)
+
     # Output filename keeps your desired format:
     # "<order>. <setting>.png"
     png_name <- file.path(plots_dir, sprintf("%d. %s.png", plot_order, setting))
@@ -310,8 +333,12 @@ make_plots <- function(results_dir = "../results",
   cat("\nAll detected settings processed successfully!\n")
 }
 
-# bernoulli_prob <- 0.1
-# alpha <- 0.1
-# make_plots(results_dir = sprintf("../new_results%s", as.character(bernoulli_prob)),
-#            plots_dir = sprintf("../new_plots%s", as.character(bernoulli_prob)),
-#            target_alpha = alpha)
+if (sys.nframe() == 0L) {
+  bernoulli_prob <- 0.1
+  alpha <- 0.1
+  make_plots(
+    results_dir = sprintf("../new_results%s", as.character(bernoulli_prob)),
+    plots_dir = sprintf("../new_plots%s", as.character(bernoulli_prob)),
+    target_alpha = alpha
+  )
+}

@@ -582,9 +582,318 @@ oracle_sc_prob <- function(oracle_mdl, data, t) {
 }
 
 
+step_survival <- function(time_grid, survival_values, t) {
+  t <- as.numeric(t)
+
+  if (length(time_grid) == 0L) {
+    return(rep(1, length(t)))
+  }
+
+  idx <- findInterval(t, time_grid)
+  out <- rep(1, length(t))
+  use <- idx > 0L
+
+  out[use] <- survival_values[
+    pmin(idx[use], length(survival_values))
+  ]
+  out[t <= 0] <- 1
+
+  pmin(pmax(out, 0), 1)
+}
+
+
+rowwise_step_survival <- function(time_grid, survival_matrix, t) {
+  survival_matrix <- as.matrix(survival_matrix)
+  n <- nrow(survival_matrix)
+
+  if (is.matrix(t)) {
+    if (nrow(t) != n) {
+      stop("For matrix t, nrow(t) must equal nrow(survival_matrix).")
+    }
+
+    k <- ncol(t)
+    flat_t <- as.vector(t)
+    idx <- findInterval(flat_t, time_grid)
+    row_idx <- rep(seq_len(n), times = k)
+    out <- rep(1, length(flat_t))
+    use <- idx > 0L
+
+    out[use] <- survival_matrix[
+      cbind(
+        row_idx[use],
+        pmin(idx[use], ncol(survival_matrix))
+      )
+    ]
+    out[flat_t <= 0] <- 1
+
+    return(
+      matrix(
+        pmin(pmax(out, 0), 1),
+        nrow = n,
+        ncol = k
+      )
+    )
+  }
+
+  if (length(t) == 1L) {
+    t <- rep(t, n)
+  }
+  if (length(t) != n) {
+    stop("Length of t must equal nrow(survival_matrix).")
+  }
+
+  idx <- findInterval(t, time_grid)
+  out <- rep(1, n)
+  use <- idx > 0L
+  out[use] <- survival_matrix[
+    cbind(
+      which(use),
+      pmin(idx[use], ncol(survival_matrix))
+    )
+  ]
+  out[t <= 0] <- 1
+
+  pmin(pmax(out, 0), 1)
+}
+
+
+fit_sc_model <- function(method,
+                         data_fit,
+                         xnames,
+                         setting = NULL,
+                         ntree = 1000) {
+  method <- match.arg(
+    method,
+    c("oracle", "rsf", "aft_lognormal", "km_x1", "km")
+  )
+
+  dat <- as.data.frame(data_fit)
+  dat$cens_event <- 1L - as.integer(dat$event)
+
+  if (method == "oracle") {
+    if (is.null(setting)) {
+      stop("setting is required for method = 'oracle'.")
+    }
+    return(make_oracle_sc_model(setting))
+  }
+
+  if (method == "aft_lognormal") {
+    fmla <- as.formula(
+      paste(
+        "Surv(censored_T, cens_event) ~",
+        paste(xnames, collapse = " + ")
+      )
+    )
+    fit <- survival::survreg(fmla, data = dat, dist = "lognormal")
+
+    return(
+      structure(
+        list(fit = fit, xnames = xnames),
+        class = "sc_aft_lognormal"
+      )
+    )
+  }
+
+  if (method == "km") {
+    fit <- survival::survfit(
+      survival::Surv(censored_T, cens_event) ~ 1,
+      data = dat
+    )
+    return(structure(list(fit = fit), class = "sc_km"))
+  }
+
+  if (method == "km_x1") {
+    if (!("X1" %in% colnames(dat))) {
+      stop("km_x1 requires X1.")
+    }
+
+    fits <- setNames(vector("list", 2), c("0", "1"))
+    for (g in c(0, 1)) {
+      dat_g <- dat[dat$X1 == g, , drop = FALSE]
+      fits[[as.character(g)]] <- if (nrow(dat_g) == 0L) {
+        NULL
+      } else {
+        survival::survfit(
+          survival::Surv(censored_T, cens_event) ~ 1,
+          data = dat_g
+        )
+      }
+    }
+
+    return(structure(list(fits = fits), class = "sc_km_x1"))
+  }
+
+  if (!requireNamespace("randomForestSRC", quietly = TRUE)) {
+    stop("Install randomForestSRC before using method = 'rsf'.")
+  }
+
+  fmla <- as.formula(
+    paste(
+      "Surv(censored_T, cens_event) ~",
+      paste(xnames, collapse = " + ")
+    )
+  )
+  fit_dat <- dat[
+    ,
+    c("censored_T", "cens_event", xnames),
+    drop = FALSE
+  ]
+  fit <- randomForestSRC::rfsrc(
+    formula = fmla,
+    data = fit_dat,
+    ntree = ntree,
+    nodesize = 15,
+    nsplit = 10,
+    importance = "none",
+    block.size = 10
+  )
+
+  structure(
+    list(fit = fit, xnames = xnames),
+    class = "sc_rsf"
+  )
+}
+
+
+sc_prob_aft_lognormal <- function(mdl0, data, t) {
+  X <- as.data.frame(data)
+  newdata <- X[, mdl0$xnames, drop = FALSE]
+  mu <- as.numeric(predict(mdl0$fit, newdata = newdata, type = "lp"))
+  sigma <- as.numeric(mdl0$fit$scale)
+  n <- nrow(newdata)
+
+  if (is.matrix(t)) {
+    if (nrow(t) != n) {
+      stop("For matrix t, nrow(t) must equal nrow(data).")
+    }
+    mu_mat <- matrix(mu, nrow = n, ncol = ncol(t))
+    t_safe <- pmax(t, .Machine$double.xmin)
+    out <- 1 - pnorm((log(t_safe) - mu_mat) / sigma)
+    out[t <= 0] <- 1
+  } else {
+    if (length(t) == 1L) {
+      t <- rep(t, n)
+    }
+    if (length(t) != n) {
+      stop("Length of t must equal nrow(data).")
+    }
+    t_safe <- pmax(t, .Machine$double.xmin)
+    out <- 1 - pnorm((log(t_safe) - mu) / sigma)
+    out[t <= 0] <- 1
+  }
+
+  out[!is.finite(out)] <- 0
+  pmin(pmax(out, 0), 1)
+}
+
+
+sc_prob_km <- function(mdl0, data, t) {
+  fit <- mdl0$fit
+
+  if (is.matrix(t)) {
+    out <- step_survival(fit$time, fit$surv, as.vector(t))
+    return(matrix(out, nrow = nrow(t), ncol = ncol(t)))
+  }
+  if (length(t) == 1L) {
+    t <- rep(t, nrow(data))
+  }
+  step_survival(fit$time, fit$surv, t)
+}
+
+
+sc_prob_km_x1 <- function(mdl0, data, t) {
+  X <- as.data.frame(data)
+  if (!("X1" %in% colnames(X))) {
+    stop("sc_km_x1 prediction requires X1.")
+  }
+
+  n <- nrow(X)
+  if (is.matrix(t)) {
+    if (nrow(t) != n) {
+      stop("For matrix t, nrow(t) must equal nrow(data).")
+    }
+    out <- matrix(NA_real_, nrow = n, ncol = ncol(t))
+    for (g in c(0, 1)) {
+      rows <- which(X$X1 == g)
+      if (length(rows) == 0L) next
+      fit <- mdl0$fits[[as.character(g)]]
+      out[rows, ] <- if (is.null(fit)) {
+        1
+      } else {
+        matrix(
+          step_survival(
+            fit$time,
+            fit$surv,
+            as.vector(t[rows, , drop = FALSE])
+          ),
+          nrow = length(rows),
+          ncol = ncol(t)
+        )
+      }
+    }
+    return(out)
+  }
+
+  if (length(t) == 1L) {
+    t <- rep(t, n)
+  }
+  if (length(t) != n) {
+    stop("Length of t must equal nrow(data).")
+  }
+
+  out <- rep(NA_real_, n)
+  for (g in c(0, 1)) {
+    rows <- which(X$X1 == g)
+    if (length(rows) == 0L) next
+    fit <- mdl0$fits[[as.character(g)]]
+    out[rows] <- if (is.null(fit)) {
+      1
+    } else {
+      step_survival(fit$time, fit$surv, t[rows])
+    }
+  }
+  out
+}
+
+
+sc_prob_rsf <- function(mdl0, data, t) {
+  X <- as.data.frame(data)
+  newdata <- X[, mdl0$xnames, drop = FALSE]
+  pred <- predict(mdl0$fit, newdata = newdata)
+
+  rowwise_step_survival(
+    time_grid = pred$time.interest,
+    survival_matrix = as.matrix(pred$survival),
+    t = t
+  )
+}
+
+
+is_sc_model <- function(mdl0) {
+  any(vapply(
+    c("oracle_sc", "sc_aft_lognormal", "sc_km", "sc_km_x1", "sc_rsf"),
+    function(class_name) inherits(mdl0, class_name),
+    logical(1)
+  ))
+}
+
+
 sc_prob <- function(mdl0, data, xnames, t) {
   if (inherits(mdl0, "oracle_sc")) {
     return(oracle_sc_prob(mdl0, data, t))
+  }
+
+  if (inherits(mdl0, "sc_aft_lognormal")) {
+    return(sc_prob_aft_lognormal(mdl0, data, t))
+  }
+  if (inherits(mdl0, "sc_km")) {
+    return(sc_prob_km(mdl0, data, t))
+  }
+  if (inherits(mdl0, "sc_km_x1")) {
+    return(sc_prob_km_x1(mdl0, data, t))
+  }
+  if (inherits(mdl0, "sc_rsf")) {
+    return(sc_prob_rsf(mdl0, data, t))
   }
 
   Xmat <- as.matrix(data[, xnames, drop = FALSE])

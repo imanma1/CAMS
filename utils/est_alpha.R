@@ -21,7 +21,7 @@ alpha_qt <- function(mdl, newdata, data_fit, data_calib, xnames, alpha, len_x, m
     lv_mat <- t(lv_mat)
   }
 
-  if (use_oracle_sc) {
+  if (use_oracle_sc || is_sc_model(mdl0)) {
     pr_mat <- sc_prob(
       mdl0 = mdl0,
       data = data_calib,
@@ -120,7 +120,7 @@ alpha_qct <- function(mdl, qc_mdl, newdata, data_fit, data_calib, xnames, alpha,
 
   lv_mat <- pmin(lv1_mat, qc_mat)
 
-  if (use_oracle_sc) {
+  if (use_oracle_sc || is_sc_model(mdl0)) {
     pr_mat <- sc_prob(
       mdl0 = mdl0,
       data = data_calib,

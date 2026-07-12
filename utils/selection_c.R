@@ -217,7 +217,7 @@ evaluate_length <- function(c, alpha, n, p,
       {
         if (
           use_oracle_sc ||
-          inherits(mdl0, "oracle_sc")
+          is_sc_model(mdl0)
         ) {
 
           list(

@@ -146,7 +146,7 @@ cox_censoring_prob <- function(mdl0, calib, test = NULL,
                                use_oracle_sc = FALSE) {
   p <- length(xnames)
 
-  if (use_oracle_sc || inherits(mdl0, "oracle_sc")) {
+  if (use_oracle_sc || is_sc_model(mdl0)) {
 
     pr_calib <- sc_prob(
       mdl0 = mdl0,
@@ -162,7 +162,8 @@ cox_censoring_prob <- function(mdl0, calib, test = NULL,
         colnames(newdata) <- xnames
       }
 
-      # In subgroup mode, xnames may exclude X1, but oracle S_C may need X1.
+      # In subgroup mode, xnames may exclude X1, but the full censoring
+      # model was fitted with it. Recover the constant subgroup value.
       # Since calib is subgroup-specific, X1 is constant and can be recovered.
       if (!("X1" %in% colnames(newdata)) && ("X1" %in% colnames(calib))) {
         x1_vals <- unique(calib$X1)

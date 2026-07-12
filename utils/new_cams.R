@@ -127,7 +127,7 @@ new_est_alpha_ipcw_group <- function(mdl, newdata, data_calib,
 
   calib_x <- data_calib[, xnames, drop = FALSE]
 
-  if (use_oracle_sc) {
+  if (use_oracle_sc || is_sc_model(mdl0)) {
     raw_pr_calib <- sc_prob(
       mdl0 = mdl0,
       data = data_calib,

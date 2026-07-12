@@ -1,6 +1,7 @@
 model_generating_fun <- function(n_train, n_calib, n_test,
                                  setting, xmin, xmax,
-                                 bernoulli_prob = 0.1) {
+                                 bernoulli_prob = 0.1,
+                                 homoscedastic_event = FALSE) {
 
   # =====================================================================
   # 1. DEFINE SETTING FORMULAS AND DIMENSIONS
@@ -382,7 +383,11 @@ model_generating_fun <- function(n_train, n_calib, n_test,
     }
 
     sigma_t_fun <- function(x) {
-      0.28 + 0.17 * x[, 1]
+      if (homoscedastic_event) {
+        rep(0.35, nrow(x))
+      } else {
+        0.28 + 0.17 * x[, 1]
+      }
     }
 
     gen_t <- function(x) {
@@ -456,7 +461,11 @@ model_generating_fun <- function(n_train, n_calib, n_test,
     }
 
     sigma_t_fun <- function(x) {
-      0.28 + 0.17 * x[, 1]
+      if (homoscedastic_event) {
+        rep(0.35, nrow(x))
+      } else {
+        0.28 + 0.17 * x[, 1]
+      }
     }
 
     gen_t <- function(x) {
@@ -530,7 +539,11 @@ model_generating_fun <- function(n_train, n_calib, n_test,
     }
 
     sigma_t_fun <- function(x) {
-      0.28 + 0.17 * x[, 1]
+      if (homoscedastic_event) {
+        rep(0.35, nrow(x))
+      } else {
+        0.28 + 0.17 * x[, 1]
+      }
     }
 
     gen_t <- function(x) {

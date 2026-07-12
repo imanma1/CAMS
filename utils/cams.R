@@ -1,7 +1,9 @@
 cams <- function(x, p, len_x, xnames,
                  data_fit, data_calib,
                  mdl0, alpha,
-                 use_oracle_sc = FALSE) {
+                 use_oracle_sc = FALSE,
+                 augmentation_method = c("same", "correct", "wrong"),
+                 augmentation_mdl = NULL) {
 
   newdata <- data.frame(x)
   colnames(newdata) <- xnames
@@ -11,6 +13,30 @@ cams <- function(x, p, len_x, xnames,
   )
 
   mdl <- survreg(fmla, data = data_fit, dist = "weibull")
+
+  augmentation_method <- match.arg(augmentation_method)
+
+  if (is.null(augmentation_mdl)) {
+    if (augmentation_method %in% c("same", "correct")) {
+      augmentation_mdl <- mdl
+    } else {
+      wrong_xnames <- intersect(c("X1", "X2"), xnames)
+      if (length(wrong_xnames) == 0L) {
+        stop("The deliberately wrong augmentation model needs X1 or X2.")
+      }
+      wrong_fmla <- as.formula(
+        paste(
+          "Surv(censored_T, event) ~",
+          paste(wrong_xnames, collapse = " + ")
+        )
+      )
+      augmentation_mdl <- survreg(
+        wrong_fmla,
+        data = data_fit,
+        dist = "weibull"
+      )
+    }
+  }
 
   eta <- 1 / log(nrow(data_calib))
 
@@ -25,15 +51,17 @@ cams <- function(x, p, len_x, xnames,
 
   res0 <- est_alpha_ipcw(
     mdl, newdata0, calib0,
-    xnames, alpha, nrow(newdata0), mdl0, eta, use_oracle_sc
+    xnames, alpha, nrow(newdata0), mdl0, eta, use_oracle_sc,
+    augmentation_mdl = augmentation_mdl
   )
 
   res1 <- est_alpha_ipcw(
     mdl, newdata1, calib1,
-    xnames, alpha, nrow(newdata1), mdl0, eta, use_oracle_sc
+    xnames, alpha, nrow(newdata1), mdl0, eta, use_oracle_sc,
+    augmentation_mdl = augmentation_mdl
   )
 
-  method_names <- names(res0)
+  method_names <- names(res0$bounds)
 
   output <- as.data.frame(
     setNames(
@@ -44,22 +72,28 @@ cams <- function(x, p, len_x, xnames,
   )
 
   for (method_name in method_names) {
-    output[idx_test_0, method_name] <- res0[[method_name]]
-    output[idx_test_1, method_name] <- res1[[method_name]]
+    output[idx_test_0, method_name] <- res0$bounds[[method_name]]
+    output[idx_test_1, method_name] <- res1$bounds[[method_name]]
   }
 
   output[] <- lapply(output, function(z) pmax(z, 0))
 
   return(list(
     output = output,
-    times = rep(NA_real_, ncol(output))
+    times = rep(NA_real_, ncol(output)),
+    diagnostics = rbind(
+      transform(res0$diagnostics, subgroup = 0L),
+      transform(res1$diagnostics, subgroup = 1L)
+    ),
+    augmentation_method = augmentation_method
   ))
 }
 
 est_alpha_ipcw <- function(mdl, newdata, data_calib,
                            xnames, alpha, len_x,
                            mdl0, eta,
-                           use_oracle_sc = FALSE) {
+                           use_oracle_sc = FALSE,
+                           augmentation_mdl = mdl) {
 
   method_names <- c(
     "CAMS",
@@ -71,8 +105,7 @@ est_alpha_ipcw <- function(mdl, newdata, data_calib,
   )
 
   if (nrow(newdata) == 0) {
-    return(
-      setNames(
+    empty_bounds <- setNames(
         replicate(
           length(method_names),
           numeric(0),
@@ -80,12 +113,21 @@ est_alpha_ipcw <- function(mdl, newdata, data_calib,
         ),
         method_names
       )
-    )
+    return(list(
+      bounds = empty_bounds,
+      diagnostics = data.frame(
+        method = method_names,
+        selected_calibration_level = NA_real_,
+        estimated_calibration_risk = NA_real_,
+        fraction_censoring_probabilities_truncated = NA_real_,
+        n_calib = 0L,
+        check.names = FALSE
+      )
+    ))
   }
 
   if (nrow(data_calib) == 0) {
-    return(
-      setNames(
+    empty_bounds <- setNames(
         replicate(
           length(method_names),
           rep(0, nrow(newdata)),
@@ -93,7 +135,17 @@ est_alpha_ipcw <- function(mdl, newdata, data_calib,
         ),
         method_names
       )
-    )
+    return(list(
+      bounds = empty_bounds,
+      diagnostics = data.frame(
+        method = method_names,
+        selected_calibration_level = 0,
+        estimated_calibration_risk = 0,
+        fraction_censoring_probabilities_truncated = NA_real_,
+        n_calib = 0L,
+        check.names = FALSE
+      )
+    ))
   }
 
   v_list <- seq(
@@ -113,6 +165,7 @@ est_alpha_ipcw <- function(mdl, newdata, data_calib,
   # Stabilized AIPCW cache
   aipcw_cache <- make_aipcw_cache(
     mdl = mdl,
+    augmentation_mdl = augmentation_mdl,
     data_calib = data_calib,
     xnames = xnames,
     mdl0 = mdl0,
@@ -124,6 +177,7 @@ est_alpha_ipcw <- function(mdl, newdata, data_calib,
   # A tiny floor is retained only to prevent division by zero.
   aipcw_raw_cache <- make_aipcw_cache(
     mdl = mdl,
+    augmentation_mdl = augmentation_mdl,
     data_calib = data_calib,
     xnames = xnames,
     mdl0 = mdl0,
@@ -279,9 +333,11 @@ est_alpha_ipcw <- function(mdl, newdata, data_calib,
     )
 
     if (length(feasible_idx) == 0L) {
-      return(
-        rep(0, len_x)
-      )
+      return(list(
+        bound = rep(0, len_x),
+        selected_v = 0,
+        selected_risk = 0
+      ))
     }
 
     v_hat <- max(
@@ -303,17 +359,50 @@ est_alpha_ipcw <- function(mdl, newdata, data_calib,
       )
     }
 
-    lower_bnd
+    list(
+      bound = lower_bnd,
+      selected_v = v_hat,
+      selected_risk = risk_mat[feasible_idx[length(feasible_idx)], method_name]
+    )
   }
 
-  out <- lapply(
+  selected <- lapply(
     method_names,
     get_bound_for_method
   )
 
-  names(out) <- method_names
+  names(selected) <- method_names
 
-  out
+  out <- lapply(selected, `[[`, "bound")
+
+  fraction_truncated <- mean(
+    !is.finite(aipcw_raw_cache$G_y_raw) |
+      aipcw_raw_cache$G_y_raw < eta
+  )
+
+  diagnostics <- data.frame(
+    method = method_names,
+    selected_calibration_level = vapply(
+      selected,
+      `[[`,
+      numeric(1),
+      "selected_v"
+    ),
+    estimated_calibration_risk = vapply(
+      selected,
+      `[[`,
+      numeric(1),
+      "selected_risk"
+    ),
+    fraction_censoring_probabilities_truncated = rep(
+      fraction_truncated,
+      length(method_names)
+    ),
+    n_calib = rep(n_calib_subgroup, length(method_names)),
+    check.names = FALSE
+  )
+
+  list(bounds = out, diagnostics = diagnostics)
 }
 
 
@@ -409,6 +498,7 @@ row_cumsum <- function(mat) {
 }
 
 make_aipcw_cache <- function(mdl,
+                             augmentation_mdl = mdl,
                              data_calib,
                              xnames,
                              mdl0,
@@ -449,11 +539,12 @@ make_aipcw_cache <- function(mdl,
     return(list(
       Y = Y,
       event = event,
+      G_y_raw = as.numeric(G_y_raw),
       G_y = G_y,
       grid = numeric(0),
       cum_A = matrix(numeric(0), nrow = n, ncol = 0),
       cum_B = matrix(numeric(0), nrow = n, ncol = 0),
-      mdl = mdl,
+      mdl = augmentation_mdl,
       calib_x = calib_x
     ))
   }
@@ -562,7 +653,7 @@ make_aipcw_cache <- function(mdl,
   dM <- dN - dLambda
 
   S_T_grid <- survreg_weibull_survival(
-    mdl = mdl,
+    mdl = augmentation_mdl,
     newdata = calib_x,
     t = grid_mat
   )
@@ -581,11 +672,12 @@ make_aipcw_cache <- function(mdl,
   list(
     Y = Y,
     event = event,
+    G_y_raw = as.numeric(G_y_raw),
     G_y = G_y,
     grid = censoring_grid,
     cum_A = row_cumsum(increment_A),
     cum_B = row_cumsum(increment_B),
-    mdl = mdl,
+    mdl = augmentation_mdl,
     calib_x = calib_x
   )
 }
