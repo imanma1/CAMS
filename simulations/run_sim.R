@@ -3,7 +3,7 @@ total_start_time <- proc.time()[3]
 ## Process the input argument
 ########################################
 args <- commandArgs(trailingOnly = TRUE)
-default_settings <- c(,
+default_settings <- c(
   "cams_vs_vanilla_lower_tail_hd_main"
 )
 setting_list <- if (length(args) >= 1L && nzchar(args[1])) {
