@@ -4,7 +4,7 @@
 
 #SBATCH --job-name=conformal_sim
 
-#SBATCH --time=10:00:00
+#SBATCH --time=3:02:00
 
 #SBATCH --cpus-per-task=48
 
@@ -25,10 +25,10 @@ module load r/4.5.0
 cd ~/scratch/CAMS/simulations
 
 
-SETTING_LIST="cams_vs_vanilla_lower_tail_hd_mild,cams_vs_vanilla_lower_tail_hd_main,cams_vs_vanilla_lower_tail_hd_strong"
-SC_METHODS="oracle,km,aft_lognormal,km_x1,km"
-AUGMENTATION_METHODS="correct,wrong"
-HOMOSCEDASTIC_EVENT=1
+SETTING_LIST="cams_vs_vanilla_lower_tail_hd_main"
+SC_METHODS="oracle,km"
+AUGMENTATION_METHODS="oracle_event,wrong"
+HOMOSCEDASTIC_EVENT=0
 SC_NTREE=1000
 NUM_RUNS=5
 

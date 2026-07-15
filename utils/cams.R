@@ -1,9 +1,225 @@
+make_oracle_event_model <- function(setting,
+                                    homoscedastic_event = FALSE) {
+
+  supported_settings <- c(
+    "cams_vs_vanilla_lower_tail_hd_mild",
+    "cams_vs_vanilla_lower_tail_hd_main",
+    "cams_vs_vanilla_lower_tail_hd_strong"
+  )
+
+  if (!(setting %in% supported_settings)) {
+    stop(
+      sprintf(
+        "Oracle event augmentation is not implemented for setting: %s",
+        setting
+      )
+    )
+  }
+
+  structure(
+    list(
+      setting = setting,
+      homoscedastic_event = homoscedastic_event
+    ),
+    class = "oracle_event_model"
+  )
+}
+
+
+oracle_event_survival_prob <- function(mdl,
+                                       newdata,
+                                       t) {
+
+  X <- as.data.frame(newdata)
+
+  required_names <- paste0("X", 1:75)
+
+  missing_names <- setdiff(
+    required_names,
+    colnames(X)
+  )
+
+  if (length(missing_names) > 0L) {
+    stop(
+      sprintf(
+        "Oracle event model is missing columns: %s",
+        paste(missing_names, collapse = ", ")
+      )
+    )
+  }
+
+  # Same dense signal used in the three lower-tail HD settings
+  beta_dense <- 0.03 * rep(
+    c(1, -1),
+    length.out = 75 - 4
+  )
+
+  dense_score <- as.numeric(
+    as.matrix(
+      X[, paste0("X", 5:75), drop = FALSE]
+    ) %*% beta_dense
+  )
+
+  mu_t <- 2.8 +
+    0.40 * X$X1 +
+    0.60 * X$X2 -
+    0.50 * X$X3 +
+    0.30 * X$X4 +
+    dense_score
+
+  if (isTRUE(mdl$homoscedastic_event)) {
+    sigma_t <- rep(
+      0.35,
+      nrow(X)
+    )
+  } else {
+    sigma_t <- 0.28 +
+      0.17 * X$X1
+  }
+
+  n <- nrow(X)
+
+  # --------------------------------------------------
+  # Matrix of times
+  # --------------------------------------------------
+  if (is.matrix(t)) {
+
+    if (nrow(t) != n) {
+      stop(
+        sprintf(
+          "For matrix t, nrow(t) must equal nrow(newdata): %d versus %d.",
+          nrow(t),
+          n
+        )
+      )
+    }
+
+    k <- ncol(t)
+
+    mu_mat <- matrix(
+      mu_t,
+      nrow = n,
+      ncol = k
+    )
+
+    sigma_mat <- matrix(
+      sigma_t,
+      nrow = n,
+      ncol = k
+    )
+
+    t_safe <- pmax(
+      t,
+      .Machine$double.xmin
+    )
+
+    z <- (
+      log(t_safe) -
+        mu_mat
+    ) / sigma_mat
+
+    # Prevent exp(z) overflow
+    z <- pmin(
+      z,
+      700
+    )
+
+    # For epsilon = log(-log(U)):
+    # S_T(t | X) = exp(-exp(z))
+    surv <- exp(
+      -exp(z)
+    )
+
+    surv[t <= 0] <- 1
+
+  } else {
+
+    # --------------------------------------------------
+    # Scalar or rowwise vector of times
+    # --------------------------------------------------
+    if (length(t) == 1L) {
+      t <- rep(
+        t,
+        n
+      )
+    }
+
+    if (length(t) != n) {
+      stop(
+        sprintf(
+          "Length of t must equal nrow(newdata): %d versus %d.",
+          length(t),
+          n
+        )
+      )
+    }
+
+    t_safe <- pmax(
+      t,
+      .Machine$double.xmin
+    )
+
+    z <- (
+      log(t_safe) -
+        mu_t
+    ) / sigma_t
+
+    z <- pmin(
+      z,
+      700
+    )
+
+    surv <- exp(
+      -exp(z)
+    )
+
+    surv[t <= 0] <- 1
+  }
+
+  surv[!is.finite(surv)] <- 0
+
+  pmin(
+    pmax(surv, 0),
+    1
+  )
+}
+
+
+augmentation_survival_prob <- function(mdl,
+                                       newdata,
+                                       t) {
+
+  if (inherits(mdl, "oracle_event_model")) {
+    return(
+      oracle_event_survival_prob(
+        mdl = mdl,
+        newdata = newdata,
+        t = t
+      )
+    )
+  }
+
+  # Existing fitted Weibull survreg augmentation model
+  survreg_weibull_survival(
+    mdl = mdl,
+    newdata = newdata,
+    t = t
+  )
+}
+
 cams <- function(x, p, len_x, xnames,
                  data_fit, data_calib,
                  mdl0, alpha,
                  use_oracle_sc = FALSE,
-                 augmentation_method = c("same", "correct", "wrong"),
-                 augmentation_mdl = NULL) {
+                 augmentation_method = c(
+                   "same",
+                   "correct",
+                   "wrong",
+                   "oracle_event"
+                 ),
+                 augmentation_mdl = NULL,
+                 setting = NULL,
+                 homoscedastic_event = FALSE) {
 
   newdata <- data.frame(x)
   colnames(newdata) <- xnames
@@ -17,19 +233,51 @@ cams <- function(x, p, len_x, xnames,
   augmentation_method <- match.arg(augmentation_method)
 
   if (is.null(augmentation_mdl)) {
+
     if (augmentation_method %in% c("same", "correct")) {
+
+      # Practical full fitted Weibull model.
+      #
+      # "same" and the old "correct" retain their old behavior
+      # so previous results remain interpretable.
       augmentation_mdl <- mdl
-    } else {
-      wrong_xnames <- intersect(c("X1", "X2"), xnames)
-      if (length(wrong_xnames) == 0L) {
-        stop("The deliberately wrong augmentation model needs X1 or X2.")
+
+    } else if (augmentation_method == "oracle_event") {
+
+      if (is.null(setting)) {
+        stop(
+          "setting must be supplied when augmentation_method = 'oracle_event'."
+        )
       }
+
+      augmentation_mdl <- make_oracle_event_model(
+        setting = setting,
+        homoscedastic_event = homoscedastic_event
+      )
+
+    } else if (augmentation_method == "wrong") {
+
+      wrong_xnames <- intersect(
+        c("X1", "X2"),
+        xnames
+      )
+
+      if (length(wrong_xnames) == 0L) {
+        stop(
+          "The deliberately wrong augmentation model needs X1 or X2."
+        )
+      }
+
       wrong_fmla <- as.formula(
         paste(
           "Surv(censored_T, event) ~",
-          paste(wrong_xnames, collapse = " + ")
+          paste(
+            wrong_xnames,
+            collapse = " + "
+          )
         )
       )
+
       augmentation_mdl <- survreg(
         wrong_fmla,
         data = data_fit,
@@ -652,7 +900,7 @@ make_aipcw_cache <- function(mdl,
   # Estimated censoring martingale increments
   dM <- dN - dLambda
 
-  S_T_grid <- survreg_weibull_survival(
+  S_T_grid <- augmentation_survival_prob(
     mdl = augmentation_mdl,
     newdata = calib_x,
     t = grid_mat
@@ -743,7 +991,7 @@ aipcw_risk_for_bound <- function(lower_bound,
       ]
     }
 
-    S_T_lower <- survreg_weibull_survival(
+    S_T_lower <- augmentation_survival_prob(
       mdl = cache$mdl,
       newdata = cache$calib_x,
       t = lower_bound

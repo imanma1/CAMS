@@ -3,10 +3,8 @@ total_start_time <- proc.time()[3]
 ## Process the input argument
 ########################################
 args <- commandArgs(trailingOnly = TRUE)
-default_settings <- c(
-  "cams_vs_vanilla_lower_tail_hd_mild",
-  "cams_vs_vanilla_lower_tail_hd_main",
-  "cams_vs_vanilla_lower_tail_hd_strong"
+default_settings <- c(,
+  "cams_vs_vanilla_lower_tail_hd_main"
 )
 setting_list <- if (length(args) >= 1L && nzchar(args[1])) {
   unlist(strsplit(args[1], ",", fixed = TRUE))
@@ -39,9 +37,9 @@ if (is.na(only_cams)) {
   only_cams <- FALSE
 }
 
-augmentation_arg <- if (length(args) >= 5L) args[5] else "correct"
+augmentation_arg <- if (length(args) >= 5L) args[5] else "wrong"
 augmentation_methods <- unlist(strsplit(augmentation_arg, ",", fixed = TRUE))
-valid_augmentation_methods <- c("same", "correct", "wrong")
+valid_augmentation_methods <- c("same", "correct", "wrong", "oracle_event")
 if (any(!augmentation_methods %in% valid_augmentation_methods)) {
   stop(sprintf(
     "Unknown augmentation model(s): %s",

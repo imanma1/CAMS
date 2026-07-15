@@ -4,7 +4,7 @@ simu <- function(seed, setting, only_cams = FALSE,
                  bernoulli_prob = 0.1,
                  use_oracle_sc = FALSE,
                  sc_method = NULL,
-                 augmentation_method = c("same", "correct", "wrong"),
+                 augmentation_method = c("same", "correct", "wrong", "oracle_event"),
                  homoscedastic_event = FALSE,
                  sc_ntree = 1000) {
   set.seed(seed)
@@ -394,7 +394,9 @@ simu <- function(seed, setting, only_cams = FALSE,
     mdl0 = res_joint$mdl0,
     alpha = alpha,
     use_oracle_sc = use_oracle_sc,
-    augmentation_method = augmentation_method
+    augmentation_method = augmentation_method,
+    setting = setting,
+    homoscedastic_event = homoscedastic_event
   )
   time_cams <- proc.time()[3] - start_time_cams + time_mdl0
   cat(sprintf("CAMS trained in %.2f seconds.\n", time_cams))
