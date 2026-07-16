@@ -233,6 +233,22 @@ make_oracle_sc_model <- function(setting) {
   )
 }
 
+make_power_oracle_sc_model <- function(setting, gamma) {
+
+  if (!is.finite(gamma) || gamma <= 0) {
+    stop("gamma must be positive.")
+  }
+
+  structure(
+    list(
+      setting = setting,
+      sigma_c = 0.5,
+      gamma = gamma
+    ),
+    class = "power_oracle_sc"
+  )
+}
+
 
 mu_c_oracle <- function(X, setting) {
   X <- as.data.frame(X)
@@ -661,10 +677,11 @@ fit_sc_model <- function(method,
                          data_fit,
                          xnames,
                          setting = NULL,
-                         ntree = 1000) {
+                         ntree = 1000,
+                         gamma = 1.0) {
   method <- match.arg(
     method,
-    c("oracle", "rsf", "aft_lognormal", "km_x1", "km")
+    c("oracle", "power_oracle", "rsf", "aft_lognormal", "km_x1", "km")
   )
 
   dat <- as.data.frame(data_fit)
@@ -675,6 +692,13 @@ fit_sc_model <- function(method,
       stop("setting is required for method = 'oracle'.")
     }
     return(make_oracle_sc_model(setting))
+  }
+
+  if (method == "power_oracle") {
+    if (is.null(setting)) {
+      stop("setting is required for method = 'power_oracle'.")
+    }
+    return(make_power_oracle_sc_model(setting, gamma = gamma))
   }
 
   if (method == "aft_lognormal") {
@@ -871,7 +895,7 @@ sc_prob_rsf <- function(mdl0, data, t) {
 
 is_sc_model <- function(mdl0) {
   any(vapply(
-    c("oracle_sc", "sc_aft_lognormal", "sc_km", "sc_km_x1", "sc_rsf"),
+    c("oracle_sc", "power_oracle_sc", "sc_aft_lognormal", "sc_km", "sc_km_x1", "sc_rsf"),
     function(class_name) inherits(mdl0, class_name),
     logical(1)
   ))
@@ -881,6 +905,28 @@ is_sc_model <- function(mdl0) {
 sc_prob <- function(mdl0, data, xnames, t) {
   if (inherits(mdl0, "oracle_sc")) {
     return(oracle_sc_prob(mdl0, data, t))
+  }
+
+  if (inherits(mdl0, "power_oracle_sc")) {
+
+    oracle_mdl <- make_oracle_sc_model(
+      setting = mdl0$setting
+    )
+
+    true_G <- oracle_sc_prob(
+      oracle_mdl = oracle_mdl,
+      data = data,
+      t = t
+    )
+
+    wrong_G <- true_G ^ mdl0$gamma
+
+    return(
+      pmin(
+        pmax(wrong_G, 0),
+        1
+      )
+    )
   }
 
   if (inherits(mdl0, "sc_aft_lognormal")) {

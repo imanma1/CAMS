@@ -6,7 +6,8 @@ simu <- function(seed, setting, only_cams = FALSE,
                  sc_method = NULL,
                  augmentation_method = c("same", "correct", "wrong", "oracle_event"),
                  homoscedastic_event = FALSE,
-                 sc_ntree = 1000) {
+                 sc_ntree = 1000,
+                 gamma = 1.0) {
   set.seed(seed)
   mod <- "cox"
 
@@ -15,7 +16,7 @@ simu <- function(seed, setting, only_cams = FALSE,
   }
   sc_method <- match.arg(
     sc_method,
-    c("oracle", "rsf", "aft_lognormal", "km_x1", "km")
+    c("oracle", "rsf", "aft_lognormal", "km_x1", "km", "power_oracle")
   )
   augmentation_method <- match.arg(augmentation_method)
   use_oracle_sc <- identical(sc_method, "oracle")
@@ -54,7 +55,8 @@ simu <- function(seed, setting, only_cams = FALSE,
     data_fit = data_fit,
     xnames = xnames,
     setting = setting,
-    ntree = sc_ntree
+    ntree = sc_ntree,
+    gamma = gamma
   )
   time_mdl0 <- proc.time()[3] - start_time_sc
   cat(sprintf("Censoring model fitted in %.2f seconds.\n", time_mdl0))

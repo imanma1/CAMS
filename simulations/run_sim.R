@@ -24,7 +24,7 @@ if (sc_arg %in% c("0", "1")) {
 } else {
   sc_methods <- unlist(strsplit(sc_arg, ",", fixed = TRUE))
 }
-valid_sc_methods <- c("oracle", "rsf", "aft_lognormal", "km_x1", "km")
+valid_sc_methods <- c("oracle", "rsf", "aft_lognormal", "km_x1", "km", "power_oracle")
 if (any(!sc_methods %in% valid_sc_methods)) {
   stop(sprintf(
     "Unknown censoring model(s): %s",
@@ -122,36 +122,69 @@ for (i in seq_len(num_runs)) {
         base_results_dir,
         paste0("sc_", sc_method),
         paste0("aug_", augmentation_method),
-        event_scale_label,
-        as.character(current_seed)
       )
-      dir.create(run_folder, showWarnings = FALSE, recursive = TRUE)
-
       for (j in seq_along(setting_list)) {
         setting <- setting_list[j]
-        cat(sprintf(
-          "\n=== Run %d | Setting: %s | G: %s | augmentation: %s ===\n",
-          i, setting, sc_method, augmentation_method
-        ))
-
         start_time <- proc.time()[3]
-        simures <- simu(
-          current_seed + 1234,
-          setting,
-          only_cams,
-          n_train,
-          n_calib,
-          n_test,
-          xmin,
-          xmax,
-          alpha,
-          bernoulli_prob,
-          use_oracle_sc = identical(sc_method, "oracle"),
-          sc_method = sc_method,
-          augmentation_method = augmentation_method,
-          homoscedastic_event = homoscedastic_event,
-          sc_ntree = sc_ntree
+        if (sc_method == "power_oracle") {
+          for (gamma in gamma_list) {
+            cat(sprintf(
+              "\n=== Run %d | Setting: %s | G: %s | augmentation: %s | gamma: %.2f ===\n",
+              i, setting, sc_method, augmentation_method, gamma
+            ))
+            simures <- simu(
+              current_seed + 1234,
+              setting,
+              only_cams,
+              n_train,
+              n_calib,
+              n_test,
+              xmin,
+              xmax,
+              alpha,
+              bernoulli_prob,
+              use_oracle_sc = identical(sc_method, "oracle"),
+              sc_method = sc_method,
+              augmentation_method = augmentation_method,
+              homoscedastic_event = homoscedastic_event,
+              sc_ntree = sc_ntree,
+              gamma = gamma
+            )
+            run_folder <- file.path(
+              run_folder,
+              paste0("gamma_", gamma),
+            )
+          }
+        } else {
+          cat(sprintf(
+            "\n=== Run %d | Setting: %s | G: %s | augmentation: %s===\n",
+            i, setting, sc_method, augmentation_method
+          ))
+          simures <- simu(
+            current_seed + 1234,
+            setting,
+            only_cams,
+            n_train,
+            n_calib,
+            n_test,
+            xmin,
+            xmax,
+            alpha,
+            bernoulli_prob,
+            use_oracle_sc = identical(sc_method, "oracle"),
+            sc_method = sc_method,
+            augmentation_method = augmentation_method,
+            homoscedastic_event = homoscedastic_event,
+            sc_ntree = sc_ntree,
+          )
+        }
+        run_folder <- file.path(
+          run_folder,
+          event_scale_label,
+          as.character(current_seed)
         )
+        dir.create(run_folder, showWarnings = FALSE, recursive = TRUE)
+
         cat(sprintf(
           "%s for run %d (%s/%s): %.2f seconds.\n",
           setting, i, sc_method, augmentation_method,
@@ -165,7 +198,6 @@ for (i in seq_len(num_runs)) {
       }
     }
   }
-
   cat(sprintf("\nCompleted run %d/%d in %.2f seconds.\n", i, num_runs, proc.time()[3] - run_start_time))
 }
 
@@ -175,19 +207,45 @@ for (sc_method in sc_methods) {
       base_results_dir,
       paste0("sc_", sc_method),
       paste0("aug_", augmentation_method),
-      event_scale_label
     )
     combination_plots_dir <- file.path(
       sub("results", "plots", base_results_dir, fixed = TRUE),
       paste0("sc_", sc_method),
       paste0("aug_", augmentation_method),
-      event_scale_label
     )
-    make_plots(
-      results_dir = combination_results_dir,
-      plots_dir = combination_plots_dir,
-      target_alpha = alpha
-    )
+    if (sc_method == "power_oracle") {
+      for (gamma in gamma_list) {
+        combination_results_dir <- file.path(
+          combination_results_dir,
+          paste0("gamma_", gamma),
+          event_scale_label
+        )
+        combination_plots_dir <- file.path(
+          combination_plots_dir,
+          paste0("gamma_", gamma),
+          event_scale_label
+        )
+        make_plots(
+          results_dir = combination_results_dir,
+          plots_dir = combination_plots_dir,
+          target_alpha = alpha
+        )
+      }
+    } else {
+      combination_results_dir <- file.path(
+        combination_results_dir,
+        event_scale_label
+      )
+      combination_plots_dir <- file.path(
+        combination_plots_dir,
+        event_scale_label
+      )
+      make_plots(
+        results_dir = combination_results_dir,
+        plots_dir = combination_plots_dir,
+        target_alpha = alpha
+      )
+    }
   }
 }
 
