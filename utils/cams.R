@@ -1,3 +1,50 @@
+make_cams_R_label <- function(
+    data,
+    use_intersectional_R = FALSE
+) {
+
+  if (!"X1" %in% colnames(data)) {
+    stop("X1 is required to define the CAMS groups.")
+  }
+
+  if (
+    anyNA(data$X1) ||
+      !all(data$X1 %in% c(0, 1))
+  ) {
+    stop("X1 must contain only 0 and 1.")
+  }
+
+  if (!use_intersectional_R) {
+    return(
+      ifelse(
+        data$X1 == 0,
+        "X1_0",
+        "X1_1"
+      )
+    )
+  }
+
+  if (!"X2" %in% colnames(data)) {
+    stop(
+      "X2 is required when use_intersectional_R = TRUE."
+    )
+  }
+
+  if (anyNA(data$X2)) {
+    stop("X2 cannot contain missing values.")
+  }
+
+  paste0(
+    "X1_", data$X1,
+    "__X2_",
+    ifelse(
+      data$X2 > 0,
+      "gt0",
+      "le0"
+    )
+  )
+}
+
 make_oracle_event_model <- function(setting,
                                     homoscedastic_event = FALSE) {
 
@@ -219,7 +266,8 @@ cams <- function(x, p, len_x, xnames,
                  ),
                  augmentation_mdl = NULL,
                  setting = NULL,
-                 homoscedastic_event = FALSE) {
+                 homoscedastic_event = FALSE,
+                 use_intersectional_R = FALSE) {
 
   newdata <- data.frame(x)
   colnames(newdata) <- xnames
@@ -286,55 +334,211 @@ cams <- function(x, p, len_x, xnames,
     }
   }
 
-  eta <- 1 / log(nrow(data_calib))
-
-  idx_test_0 <- newdata$X1 == 0
-  idx_test_1 <- newdata$X1 == 1
-
-  newdata0 <- newdata[idx_test_0, , drop = FALSE]
-  newdata1 <- newdata[idx_test_1, , drop = FALSE]
-
-  calib0 <- data_calib[data_calib$X1 == 0, , drop = FALSE]
-  calib1 <- data_calib[data_calib$X1 == 1, , drop = FALSE]
-
-  res0 <- est_alpha_ipcw(
-    mdl, newdata0, calib0,
-    xnames, alpha, nrow(newdata0), mdl0, eta, use_oracle_sc,
-    augmentation_mdl = augmentation_mdl
+  eta <- 1 / log(
+    nrow(data_calib)
   )
 
-  res1 <- est_alpha_ipcw(
-    mdl, newdata1, calib1,
-    xnames, alpha, nrow(newdata1), mdl0, eta, use_oracle_sc,
-    augmentation_mdl = augmentation_mdl
-  )
+  # ----------------------------------------------------------
+  # Define the calibration groups R
+  # ----------------------------------------------------------
 
-  method_names <- names(res0$bounds)
+  if (use_intersectional_R) {
 
-  output <- as.data.frame(
-    setNames(
-      replicate(length(method_names), rep(NA_real_, nrow(newdata)), simplify = FALSE),
-      method_names
-    ),
-    check.names = FALSE
-  )
+    R_levels <- c(
+      "X1_0__X2_le0",
+      "X1_0__X2_gt0",
+      "X1_1__X2_le0",
+      "X1_1__X2_gt0"
+    )
 
-  for (method_name in method_names) {
-    output[idx_test_0, method_name] <- res0$bounds[[method_name]]
-    output[idx_test_1, method_name] <- res1$bounds[[method_name]]
+  } else {
+
+    R_levels <- c(
+      "X1_0",
+      "X1_1"
+    )
   }
 
-  output[] <- lapply(output, function(z) pmax(z, 0))
+  R_test <- make_cams_R_label(
+    data = newdata,
+    use_intersectional_R = use_intersectional_R
+  )
 
-  return(list(
-    output = output,
-    times = rep(NA_real_, ncol(output)),
-    diagnostics = rbind(
-      transform(res0$diagnostics, subgroup = 0L),
-      transform(res1$diagnostics, subgroup = 1L)
+  R_calib <- make_cams_R_label(
+    data = data_calib,
+    use_intersectional_R = use_intersectional_R
+  )
+
+  group_results <- setNames(
+    vector(
+      mode = "list",
+      length = length(R_levels)
     ),
-    augmentation_method = augmentation_method
-  ))
+    R_levels
+  )
+
+  diagnostics_list <- setNames(
+    vector(
+      mode = "list",
+      length = length(R_levels)
+    ),
+    R_levels
+  )
+
+  output <- NULL
+  method_names <- NULL
+
+  # ----------------------------------------------------------
+  # Calibrate separately inside every R group
+  # ----------------------------------------------------------
+
+  for (r in R_levels) {
+
+    idx_test_r <- R_test == r
+    idx_calib_r <- R_calib == r
+
+    n_test_r <- sum(idx_test_r)
+    n_calib_r <- sum(idx_calib_r)
+
+    cat(
+      sprintf(
+        paste0(
+          "Calibrating CAMS for %s: ",
+          "calibration=%d, test=%d\n"
+        ),
+        r,
+        n_calib_r,
+        n_test_r
+      )
+    )
+
+    if (n_calib_r == 0L) {
+      stop(
+        sprintf(
+          "No calibration observations are available for group %s.",
+          r
+        )
+      )
+    }
+
+    if (n_test_r == 0L) {
+      warning(
+        sprintf(
+          "No test observations are available for group %s.",
+          r
+        )
+      )
+    }
+
+    res_r <- est_alpha_ipcw(
+      mdl = mdl,
+      newdata = newdata[
+        idx_test_r,
+        ,
+        drop = FALSE
+      ],
+      data_calib = data_calib[
+        idx_calib_r,
+        ,
+        drop = FALSE
+      ],
+      xnames = xnames,
+      alpha = alpha,
+      len_x = n_test_r,
+      mdl0 = mdl0,
+      eta = eta,
+      use_oracle_sc = use_oracle_sc,
+      augmentation_mdl = augmentation_mdl
+    )
+
+    group_results[[r]] <- res_r
+
+    if (is.null(output)) {
+
+      method_names <- names(
+        res_r$bounds
+      )
+
+      output <- as.data.frame(
+        setNames(
+          replicate(
+            length(method_names),
+            rep(
+              NA_real_,
+              nrow(newdata)
+            ),
+            simplify = FALSE
+          ),
+          method_names
+        ),
+        check.names = FALSE
+      )
+
+    } else if (
+      !identical(
+        method_names,
+        names(res_r$bounds)
+      )
+    ) {
+
+      stop(
+        sprintf(
+          "CAMS method names differ for group %s.",
+          r
+        )
+      )
+    }
+
+    for (method_name in method_names) {
+
+      output[
+        idx_test_r,
+        method_name
+      ] <- res_r$bounds[[
+        method_name
+      ]]
+    }
+
+    diagnostics_r <- res_r$diagnostics
+    diagnostics_r$R_label <- r
+
+    diagnostics_list[[r]] <- diagnostics_r
+  }
+
+  output[] <- lapply(
+    output,
+    function(z) {
+
+      finite_index <- is.finite(z)
+
+      z[finite_index] <- pmax(
+        z[finite_index],
+        0
+      )
+
+      z
+    }
+  )
+
+  diagnostics <- do.call(
+    rbind,
+    diagnostics_list
+  )
+
+  rownames(diagnostics) <- NULL
+
+  return(
+    list(
+      output = output,
+      times = rep(
+        NA_real_,
+        ncol(output)
+      ),
+      diagnostics = diagnostics,
+      augmentation_method = augmentation_method,
+      R_levels = R_levels
+    )
+  )
 }
 
 est_alpha_ipcw <- function(mdl, newdata, data_calib,

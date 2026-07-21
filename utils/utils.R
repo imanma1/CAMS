@@ -377,7 +377,12 @@ oracle_sc_prob <- function(oracle_mdl, data, t) {
   mixture_settings <- c(
     "cams_vs_vanilla_lower_tail_hd_mild",
     "cams_vs_vanilla_lower_tail_hd_main",
-    "cams_vs_vanilla_lower_tail_hd_strong"
+    "cams_vs_vanilla_lower_tail_hd_strong",
+    "local_null_constant_scale",
+    "local_within_group_scale_x2",
+    "local_interaction_scale_x2_x3",
+    "local_unsupported_rare_pocket",
+    "local_oblique_scale_x2_x3"
   )
 
   # ==========================================================
@@ -418,21 +423,40 @@ oracle_sc_prob <- function(oracle_mdl, data, t) {
       0.30 * X$X4 +
       dense_score
 
-    if (setting == "cams_vs_vanilla_lower_tail_hd_mild") {
+  if (setting == "cams_vs_vanilla_lower_tail_hd_mild") {
 
-      prob_early <- 0.10 + 0.05 * X$X1
-      early_offset <- 1.00
+    prob_early <- 0.10 + 0.05 * X$X1
+    early_offset <- 1.00
 
-    } else if (setting == "cams_vs_vanilla_lower_tail_hd_main") {
+  } else if (
+    setting %in% c(
+      "cams_vs_vanilla_lower_tail_hd_main",
+      "local_null_constant_scale",
+      "local_within_group_scale_x2",
+      "local_interaction_scale_x2_x3",
+      "local_unsupported_rare_pocket",
+      "local_oblique_scale_x2_x3"
+    )
+  ) {
 
-      prob_early <- 0.15 + 0.05 * X$X1
-      early_offset <- 1.30
+    # All Local-CAMS settings use the main censoring mechanism
+    prob_early <- 0.15 + 0.05 * X$X1
+    early_offset <- 1.30
 
-    } else {
+  } else if (setting == "cams_vs_vanilla_lower_tail_hd_strong") {
 
-      prob_early <- 0.20 + 0.05 * X$X1
-      early_offset <- 1.50
-    }
+    prob_early <- 0.20 + 0.05 * X$X1
+    early_offset <- 1.50
+
+  } else {
+
+    stop(
+      sprintf(
+        "Unknown mixture-censoring setting: %s",
+        setting
+      )
+    )
+  }
 
     mu_early <- mu_t - early_offset
     mu_late <- mu_t + 1.20

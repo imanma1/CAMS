@@ -591,6 +591,150 @@ model_generating_fun <- function(n_train, n_calib, n_test,
 
       exp(log_c)
     }
+  } else if (
+    setting %in% c(
+      "local_null_constant_scale",
+      "local_within_group_scale_x2",
+      "local_interaction_scale_x2_x3",
+      "local_unsupported_rare_pocket",
+      "local_oblique_scale_x2_x3"
+    )
+  ) {
+
+    # ============================================================
+    # Local-CAMS testing settings
+    # ============================================================
+    p <- 75
+
+    beta_dense <- 0.03 * rep(
+      c(1, -1),
+      length.out = p - 4
+    )
+
+    dense_score <- function(x) {
+      as.numeric(
+        as.matrix(
+          x[, 5:p, drop = FALSE]
+        ) %*% beta_dense
+      )
+    }
+
+    # Same event-time location model in every setting
+    mu_t_fun <- function(x) {
+      2.8 +
+        0.40 * x[, 1] +
+        0.60 * x[, 2] -
+        0.50 * x[, 3] +
+        0.30 * x[, 4] +
+        dense_score(x)
+    }
+
+    # Setting-specific event-time scale
+    sigma_t_fun <- function(x) {
+
+      if (setting == "local_null_constant_scale") {
+
+        # Negative control:
+        # no within-R lower-tail heterogeneity
+        sigma_t <- rep(
+          0.35,
+          nrow(x)
+        )
+
+      } else if (setting == "local_within_group_scale_x2") {
+
+        # Simple positive control:
+        # useful split should be near X2 = 0
+        sigma_t <- 0.25 +
+          0.16 * as.numeric(x[, 2] > 0) +
+          0.05 * x[, 1]
+
+      } else if (setting == "local_interaction_scale_x2_x3") {
+
+        # Harder positive control:
+        # high-scale region requires an interaction
+        sigma_t <- 0.25 +
+          0.18 * as.numeric(
+            x[, 2] > 0 &
+              x[, 3] > 0
+          ) +
+          0.05 * x[, 1]
+
+      } else if (setting == "local_unsupported_rare_pocket") {
+
+        # Rare region should generally not be split because
+        # it lacks sufficient audit/calibration support
+        sigma_t <- 0.25 +
+          0.22 * as.numeric(
+            x[, 2] > 1.4 &
+              x[, 3] > 1.4
+          ) +
+          0.05 * x[, 1]
+
+      } else if (setting == "local_oblique_scale_x2_x3") {
+
+        # Non-axis-aligned positive control.
+        # Useful for testing the limitation of a shallow
+        # axis-aligned regression tree.
+        sigma_t <- 0.25 +
+          0.18 * as.numeric(
+            0.80 * x[, 2] -
+              0.60 * x[, 3] > 0
+          ) +
+          0.05 * x[, 1]
+      }
+
+      as.numeric(sigma_t)
+    }
+
+    gen_t <- function(x) {
+
+      u <- pmin(
+        pmax(
+          runif(nrow(x)),
+          1e-12
+        ),
+        1 - 1e-12
+      )
+
+      eps_t <- log(
+        -log(u)
+      )
+
+      exp(
+        mu_t_fun(x) +
+          sigma_t_fun(x) * eps_t
+      )
+    }
+
+    # Same censoring DGP as
+    # cams_vs_vanilla_lower_tail_hd_main
+    gen_c <- function(x) {
+
+      mu_t <- mu_t_fun(x)
+
+      prob_early <- 0.15 +
+        0.05 * x[, 1]
+
+      early <- rbinom(
+        nrow(x),
+        size = 1,
+        prob = prob_early
+      )
+
+      mu_early <- mu_t - 1.30
+      mu_late <- mu_t + 1.20
+
+      log_c <- ifelse(
+        early == 1,
+        mu_early +
+          0.25 * rnorm(nrow(x)),
+        mu_late +
+          0.40 * rnorm(nrow(x))
+      )
+
+      exp(log_c)
+    }
   } else {
     stop(sprintf("Unknown setting: %s", setting))
   }

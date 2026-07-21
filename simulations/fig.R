@@ -1,10 +1,24 @@
-make_plots <- function(results_dir = "../results",
-                       plots_dir = "../plots",
-                       target_alpha = 0.1) {
+make_plots <- function(
+    results_dir = "../results",
+    plots_dir = "../plots",
+    summaries_dir = "../summaries",
+    target_alpha = 0.1,
+    use_intersectional_R = FALSE
+) {
 
   target_cov <- 1 - target_alpha
 
-  dir.create(plots_dir, showWarnings = FALSE, recursive = TRUE)
+  dir.create(
+    plots_dir,
+    showWarnings = FALSE,
+    recursive = TRUE
+  )
+
+  dir.create(
+    summaries_dir,
+    showWarnings = FALSE,
+    recursive = TRUE
+  )
 
   # ---------------------------------------------------------
   # 1. Detect seed folders
@@ -85,6 +99,128 @@ make_plots <- function(results_dir = "../results",
     c(y_min - padding, y_max + padding)
   }
 
+  xml_escape <- function(x) {
+
+    x <- as.character(x)
+
+    x[is.na(x)] <- ""
+
+    x <- gsub(
+      "&",
+      "&amp;",
+      x,
+      fixed = TRUE
+    )
+
+    x <- gsub(
+      "<",
+      "&lt;",
+      x,
+      fixed = TRUE
+    )
+
+    x <- gsub(
+      ">",
+      "&gt;",
+      x,
+      fixed = TRUE
+    )
+
+    x <- gsub(
+      "\"",
+      "&quot;",
+      x,
+      fixed = TRUE
+    )
+
+    x <- gsub(
+      "'",
+      "&apos;",
+      x,
+      fixed = TRUE
+    )
+
+    x
+  }
+
+
+  write_summary_xml <- function(
+      summary_df,
+      file_path,
+      setting
+  ) {
+
+    xml_lines <- c(
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      sprintf(
+        '<simulation_summary setting="%s">',
+        xml_escape(setting)
+      )
+    )
+
+    for (row_idx in seq_len(nrow(summary_df))) {
+
+      method_name <- summary_df$method[
+        row_idx
+      ]
+
+      xml_lines <- c(
+        xml_lines,
+        sprintf(
+          '  <method name="%s">',
+          xml_escape(method_name)
+        )
+      )
+
+      metric_names <- setdiff(
+        colnames(summary_df),
+        "method"
+      )
+
+      for (metric_name in metric_names) {
+
+        value <- summary_df[
+          row_idx,
+          metric_name
+        ][[1]]
+
+        if (
+          length(value) == 0L ||
+            is.na(value)
+        ) {
+          value <- ""
+        } else {
+          value <- as.character(value)
+        }
+
+        xml_lines <- c(
+          xml_lines,
+          sprintf(
+            '    <metric name="%s">%s</metric>',
+            xml_escape(metric_name),
+            xml_escape(value)
+          )
+        )
+      }
+
+      xml_lines <- c(
+        xml_lines,
+        "  </method>"
+      )
+    }
+
+    xml_lines <- c(
+      xml_lines,
+      "</simulation_summary>"
+    )
+
+    writeLines(
+      xml_lines,
+      con = file_path,
+      useBytes = TRUE
+    )
+  }
+
   # ---------------------------------------------------------
   # 4. Plotting helper
   # ---------------------------------------------------------
@@ -119,38 +255,136 @@ make_plots <- function(results_dir = "../results",
   # ---------------------------------------------------------
   # 5. Metric columns
   # ---------------------------------------------------------
-  metric_specs <- list(
-    list(
-      col = "Marginal coverage",
-      label = "Overall Coverage Rate",
-      target = TRUE
-    ),
-    list(
-      col = "group coverage for x_1 = 0",
-      label = "Coverage rate (x_1 = 0)",
-      target = TRUE
-    ),
-    list(
-      col = "group coverage for x_1 = 1",
-      label = "Coverage rate (x_1 = 1)",
-      target = TRUE
-    ),
-    list(
-      col = "lower bound values mean",
-      label = "Overall Average Lower Bound",
-      target = FALSE
-    ),
-    list(
-      col = "lower bound mean for x_1 = 0",
-      label = "Average Lower Bound (x_1 = 0)",
-      target = FALSE
-    ),
-    list(
-      col = "lower bound mean for x_1 = 1",
-      label = "Average Lower Bound (x_1 = 1)",
-      target = FALSE
+  if (use_intersectional_R) {
+
+    metric_specs <- list(
+
+      list(
+        col = "Marginal coverage",
+        label = "Marginal coverage",
+        target = TRUE
+      ),
+
+      list(
+        col = paste0(
+          "group coverage for ",
+          "x_1 = 0 and x_2 <= 0"
+        ),
+        label = "Coverage: X1 = 0, X2 <= 0",
+        target = TRUE
+      ),
+
+      list(
+        col = paste0(
+          "group coverage for ",
+          "x_1 = 0 and x_2 > 0"
+        ),
+        label = "Coverage: X1 = 0, X2 > 0",
+        target = TRUE
+      ),
+
+      list(
+        col = paste0(
+          "group coverage for ",
+          "x_1 = 1 and x_2 <= 0"
+        ),
+        label = "Coverage: X1 = 1, X2 <= 0",
+        target = TRUE
+      ),
+
+      list(
+        col = paste0(
+          "group coverage for ",
+          "x_1 = 1 and x_2 > 0"
+        ),
+        label = "Coverage: X1 = 1, X2 > 0",
+        target = TRUE
+      ),
+
+      list(
+        col = "lower bound values mean",
+        label = "Overall average lower bound",
+        target = FALSE
+      ),
+
+      list(
+        col = paste0(
+          "lower bound mean for ",
+          "x_1 = 0 and x_2 <= 0"
+        ),
+        label = "Lower bound: X1 = 0, X2 <= 0",
+        target = FALSE
+      ),
+
+      list(
+        col = paste0(
+          "lower bound mean for ",
+          "x_1 = 0 and x_2 > 0"
+        ),
+        label = "Lower bound: X1 = 0, X2 > 0",
+        target = FALSE
+      ),
+
+      list(
+        col = paste0(
+          "lower bound mean for ",
+          "x_1 = 1 and x_2 <= 0"
+        ),
+        label = "Lower bound: X1 = 1, X2 <= 0",
+        target = FALSE
+      ),
+
+      list(
+        col = paste0(
+          "lower bound mean for ",
+          "x_1 = 1 and x_2 > 0"
+        ),
+        label = "Lower bound: X1 = 1, X2 > 0",
+        target = FALSE
+      )
     )
-  )
+
+  } else {
+
+    metric_specs <- list(
+
+      list(
+        col = "Marginal coverage",
+        label = "Marginal coverage",
+        target = TRUE
+      ),
+
+      list(
+        col = "group coverage for x_1 = 0",
+        label = "Coverage: X1 = 0",
+        target = TRUE
+      ),
+
+      list(
+        col = "group coverage for x_1 = 1",
+        label = "Coverage: X1 = 1",
+        target = TRUE
+      ),
+
+      list(
+        col = "lower bound values mean",
+        label = "Overall average lower bound",
+        target = FALSE
+      ),
+
+      list(
+        col = "lower bound mean for x_1 = 0",
+        label = "Lower bound: X1 = 0",
+        target = FALSE
+      ),
+
+      list(
+        col = "lower bound mean for x_1 = 1",
+        label = "Lower bound: X1 = 1",
+        target = FALSE
+      )
+    )
+  }
 
   # ---------------------------------------------------------
   # 6. Loop through detected settings
@@ -283,26 +517,82 @@ make_plots <- function(results_dir = "../results",
       row
     })
     summary_df <- do.call(rbind, summary_rows)
-    summary_name <- file.path(
-      plots_dir,
-      sprintf("%d. %s_summary.csv", plot_order, setting)
+    summary_csv_name <- file.path(
+      summaries_dir,
+      sprintf(
+        "%d. %s_summary.csv",
+        plot_order,
+        setting
+      )
     )
-    write.csv(summary_df, summary_name, row.names = FALSE)
+
+    summary_xml_name <- file.path(
+      summaries_dir,
+      sprintf(
+        "%d. %s_summary.xml",
+        plot_order,
+        setting
+      )
+    )
+
+    write.csv(
+      summary_df,
+      summary_csv_name,
+      row.names = FALSE
+    )
+
+    write_summary_xml(
+      summary_df = summary_df,
+      file_path = summary_xml_name,
+      setting = setting
+    )
+
+    cat(
+      sprintf(
+        "  -> CSV summary saved to: %s\n",
+        summary_csv_name
+      )
+    )
+
+    cat(
+      sprintf(
+        "  -> XML summary saved to: %s\n",
+        summary_xml_name
+      )
+    )
 
     # Output filename keeps your desired format:
     # "<order>. <setting>.png"
     png_name <- file.path(plots_dir, sprintf("%d. %s.png", plot_order, setting))
 
+    if (use_intersectional_R) {
+
+      plot_rows <- 3
+      plot_columns <- 4
+      plot_width <- 20
+      plot_height <- 14
+
+    } else {
+
+      plot_rows <- 2
+      plot_columns <- 3
+      plot_width <- 15
+      plot_height <- 11
+    }
+
     png(
       filename = png_name,
-      width = 15,
-      height = 11,
+      width = plot_width,
+      height = plot_height,
       units = "in",
       res = 300
     )
 
     par(
-      mfrow = c(2, 3),
+      mfrow = c(
+        plot_rows,
+        plot_columns
+      ),
       mar = c(11, 4, 2, 1),
       oma = c(0, 0, 3, 0)
     )
@@ -315,6 +605,20 @@ make_plots <- function(results_dir = "../results",
         add_target_line = spec$target,
         method_levels = method_levels
       )
+    }
+
+    number_of_empty_panels <- (
+      plot_rows * plot_columns
+    ) - length(metric_specs)
+
+    if (number_of_empty_panels > 0L) {
+      for (
+        empty_panel in seq_len(
+          number_of_empty_panels
+        )
+      ) {
+        plot.new()
+      }
     }
 
     mtext(
@@ -331,14 +635,4 @@ make_plots <- function(results_dir = "../results",
   }
 
   cat("\nAll detected settings processed successfully!\n")
-}
-
-if (sys.nframe() == 0L) {
-  bernoulli_prob <- 0.1
-  alpha <- 0.1
-  make_plots(
-    results_dir = sprintf("../new_results%s", as.character(bernoulli_prob)),
-    plots_dir = sprintf("../new_plots%s", as.character(bernoulli_prob)),
-    target_alpha = alpha
-  )
 }

@@ -60,6 +60,16 @@ if (is.na(sc_ntree) || sc_ntree < 1L) sc_ntree <- 1000L
 num_runs <- if (length(args) >= 8L) as.integer(args[8]) else 10L
 if (is.na(num_runs) || num_runs < 1L) num_runs <- 10L
 
+use_intersectional_R <- if (length(args) >= 9L) {
+  as.logical(as.integer(args[9]))
+} else {
+  FALSE
+}
+
+if (is.na(use_intersectional_R)) {
+  use_intersectional_R <- FALSE
+}
+
 ########################################
 ## load libraries
 ########################################
@@ -87,13 +97,13 @@ source("./fig.R")
 ########################################
 
 alpha <- 0.1    # target level 1-alpha
-n <- 1000
-n_test <- 5000
+n <- 2000
+n_test <- 10000
 n_train <- n
 n_calib <- n
 xmin <- -2
 xmax <- 2
-bernoulli_prob <- 0.1
+bernoulli_prob <- 0.3
 
 # Detect cores just to print a helpful message (the actual multithreading happens inside the utils scripts)
 slurm_cores <- as.numeric(Sys.getenv("SLURM_CPUS_PER_TASK"))
@@ -118,10 +128,10 @@ for (i in seq_len(num_runs)) {
   run_start_time <- proc.time()[3]
   for (sc_method in sc_methods) {
     for (augmentation_method in augmentation_methods) {
-      run_folder <- file.path(
+      run_folder0 <- file.path(
         base_results_dir,
         paste0("sc_", sc_method),
-        paste0("aug_", augmentation_method),
+        paste0("aug_", augmentation_method)
       )
       for (j in seq_along(setting_list)) {
         setting <- setting_list[j]
@@ -148,11 +158,12 @@ for (i in seq_len(num_runs)) {
               augmentation_method = augmentation_method,
               homoscedastic_event = homoscedastic_event,
               sc_ntree = sc_ntree,
-              gamma = gamma
+              gamma = gamma,
+              use_intersectional_R = use_intersectional_R
             )
-            run_folder <- file.path(
-              run_folder,
-              paste0("gamma_", gamma),
+            run_folder1 <- file.path(
+              run_folder0,
+              paste0("gamma_", gamma)
             )
           }
         } else {
@@ -176,22 +187,25 @@ for (i in seq_len(num_runs)) {
             augmentation_method = augmentation_method,
             homoscedastic_event = homoscedastic_event,
             sc_ntree = sc_ntree,
+            use_intersectional_R = use_intersectional_R
           )
+          run_folder1 <- run_folder0
         }
-        run_folder <- file.path(
-          run_folder,
+        run_folder_final <- file.path(
+          run_folder1,
           event_scale_label,
           as.character(current_seed)
         )
-        dir.create(run_folder, showWarnings = FALSE, recursive = TRUE)
-
+        if (!dir.exists(run_folder_final)) {
+          dir.create(run_folder_final, showWarnings = FALSE, recursive = TRUE)
+        }
         cat(sprintf(
           "%s for run %d (%s/%s): %.2f seconds.\n",
           setting, i, sc_method, augmentation_method,
           proc.time()[3] - start_time
         ))
         save_dir <- file.path(
-          run_folder,
+          run_folder_final,
           sprintf("%d. %s_seed_%d.csv", j, setting, current_seed)
         )
         write.csv(simures, save_dir, row.names = FALSE)
@@ -201,52 +215,114 @@ for (i in seq_len(num_runs)) {
   cat(sprintf("\nCompleted run %d/%d in %.2f seconds.\n", i, num_runs, proc.time()[3] - run_start_time))
 }
 
+plots_root_dir <- sub(
+  "results",
+  "plots",
+  base_results_dir,
+  fixed = TRUE
+)
+
+summaries_root_dir <- sub(
+  "results",
+  "summaries",
+  base_results_dir,
+  fixed = TRUE
+)
+
 for (sc_method in sc_methods) {
+
   for (augmentation_method in augmentation_methods) {
-    combination_results_dir <- file.path(
+
+    # Base directories for this censoring/augmentation combination.
+    method_results_dir <- file.path(
       base_results_dir,
       paste0("sc_", sc_method),
-      paste0("aug_", augmentation_method),
+      paste0("aug_", augmentation_method)
     )
-    combination_plots_dir <- file.path(
-      sub("results", "plots", base_results_dir, fixed = TRUE),
+
+    method_plots_dir <- file.path(
+      plots_root_dir,
       paste0("sc_", sc_method),
-      paste0("aug_", augmentation_method),
+      paste0("aug_", augmentation_method)
     )
+
+    method_summaries_dir <- file.path(
+      summaries_root_dir,
+      paste0("sc_", sc_method),
+      paste0("aug_", augmentation_method)
+    )
+
     if (sc_method == "power_oracle") {
+
       for (gamma in gamma_list) {
-        combination_results_dir <- file.path(
-          combination_results_dir,
-          paste0("gamma_", gamma),
+
+        gamma_label <- paste0(
+          "gamma_",
+          format(
+            gamma,
+            trim = TRUE,
+            scientific = FALSE
+          )
+        )
+
+        current_results_dir <- file.path(
+          method_results_dir,
+          gamma_label,
           event_scale_label
         )
-        combination_plots_dir <- file.path(
-          combination_plots_dir,
-          paste0("gamma_", gamma),
+
+        current_plots_dir <- file.path(
+          method_plots_dir,
+          gamma_label,
           event_scale_label
         )
+
+        current_summaries_dir <- file.path(
+          method_summaries_dir,
+          gamma_label,
+          event_scale_label
+        )
+
         make_plots(
-          results_dir = combination_results_dir,
-          plots_dir = combination_plots_dir,
-          target_alpha = alpha
+          results_dir = current_results_dir,
+          plots_dir = current_plots_dir,
+          summaries_dir = current_summaries_dir,
+          target_alpha = alpha,
+          use_intersectional_R = use_intersectional_R
         )
       }
+
     } else {
-      combination_results_dir <- file.path(
-        combination_results_dir,
+
+      current_results_dir <- file.path(
+        method_results_dir,
         event_scale_label
       )
-      combination_plots_dir <- file.path(
-        combination_plots_dir,
+
+      current_plots_dir <- file.path(
+        method_plots_dir,
         event_scale_label
       )
+
+      current_summaries_dir <- file.path(
+        method_summaries_dir,
+        event_scale_label
+      )
+
       make_plots(
-        results_dir = combination_results_dir,
-        plots_dir = combination_plots_dir,
-        target_alpha = alpha
+        results_dir = current_results_dir,
+        plots_dir = current_plots_dir,
+        summaries_dir = current_summaries_dir,
+        target_alpha = alpha,
+        use_intersectional_R = use_intersectional_R
       )
     }
   }
 }
+
+# summarize_local_mapping_logs(
+#   search_dir = "..",
+#   output_dir = "../local_mapping_summaries"
+# )
 
 cat(sprintf("\nCompleted in %.2f seconds.\n", proc.time()[3] - total_start_time))

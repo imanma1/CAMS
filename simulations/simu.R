@@ -7,7 +7,8 @@ simu <- function(seed, setting, only_cams = FALSE,
                  augmentation_method = c("same", "correct", "wrong", "oracle_event"),
                  homoscedastic_event = FALSE,
                  sc_ntree = 1000,
-                 gamma = 1.0) {
+                 gamma = 1.0,
+                 use_intersectional_R = FALSE) {
   set.seed(seed)
   mod <- "cox"
 
@@ -61,47 +62,75 @@ simu <- function(seed, setting, only_cams = FALSE,
   time_mdl0 <- proc.time()[3] - start_time_sc
   cat(sprintf("Censoring model fitted in %.2f seconds.\n", time_mdl0))
 
-  if (
-    setting %in% c(
-      "cams_vs_vanilla_lower_tail_hd_mild",
-      "cams_vs_vanilla_lower_tail_hd_main",
-      "cams_vs_vanilla_lower_tail_hd_strong"
-    )
-  ) {
+  make_R_label <- function(data, use_intersectional_R = FALSE) {
 
-    censoring_prob_at_observed_time <- sc_prob(
-      mdl0 = mdl0,
-      data = data_calib,
-      xnames = xnames,
-      t = data_calib$censored_T
-    )
+  if (!all(data$X1 %in% c(0, 1))) {
+    stop("X1 must contain only 0 and 1.")
+  }
 
-    cat(sprintf("\n%s censoring probability diagnostics:\n", sc_method))
-
-    print(
-      summary(
-        censoring_prob_at_observed_time
-      )
-    )
-
-    cat(
-      sprintf(
-        "Number of non-finite censoring probabilities: %d\n",
-        sum(!is.finite(censoring_prob_at_observed_time))
-      )
-    )
-
-    cat(
-      sprintf(
-        "Number outside [0,1]: %d\n",
-        sum(
-          censoring_prob_at_observed_time < 0 |
-            censoring_prob_at_observed_time > 1,
-          na.rm = TRUE
-        )
+  if (!use_intersectional_R) {
+    return(
+      ifelse(
+        data$X1 == 0,
+        "X1_0",
+        "X1_1"
       )
     )
   }
+
+  if (!"X2" %in% colnames(data)) {
+    stop(
+      "X2 is required when use_intersectional_R = TRUE."
+    )
+  }
+
+  paste0(
+    "X1_", data$X1,
+    "__X2_",
+    ifelse(
+      data$X2 > 0,
+      "gt0",
+      "le0"
+    )
+  )
+}
+
+
+if (use_intersectional_R) {
+
+  R_levels <- c(
+    "X1_0__X2_le0",
+    "X1_0__X2_gt0",
+    "X1_1__X2_le0",
+    "X1_1__X2_gt0"
+  )
+
+} else {
+
+  R_levels <- c(
+    "X1_0",
+    "X1_1"
+  )
+}
+
+
+R_fit <- make_R_label(
+  data_fit,
+  use_intersectional_R
+)
+
+R_calib <- make_R_label(
+  data_calib,
+  use_intersectional_R
+)
+
+R_test <- make_R_label(
+  data_test,
+  use_intersectional_R
+)
+
+idx_test_0 <- data_test$X1 == 0
+idx_test_1 <- data_test$X1 == 1
 
   ########################################
   ## Core Pipeline Helper Function
@@ -346,8 +375,485 @@ simu <- function(seed, setting, only_cams = FALSE,
     return(list(output = output, times = times, mdl0 = mdl0))
   }
 
-  idx_test_0 <- data_test$X1 == 0
-  idx_test_1 <- data_test$X1 == 1
+  compute_metrics <- function(
+      output_df,
+      times_vec = NULL,
+      suffix_label = NULL,
+      calibration_diagnostics = NULL,
+      use_intersectional_R = FALSE
+  ) {
+
+    output_df[] <- lapply(
+      output_df,
+      function(z) {
+        z[is.finite(z)] <- pmax(
+          z[is.finite(z)],
+          0
+        )
+        z
+      }
+    )
+
+    method_names_original <- colnames(output_df)
+    method_names <- method_names_original
+
+    if (!is.null(suffix_label)) {
+      method_names <- paste(
+        method_names,
+        suffix_label
+      )
+    }
+
+    if (is.null(times_vec)) {
+      times_vec <- rep(
+        NA_real_,
+        ncol(output_df)
+      )
+    }
+
+    if (length(times_vec) == 1L) {
+      times_vec <- rep(
+        times_vec,
+        ncol(output_df)
+      )
+    }
+
+    if (length(times_vec) != ncol(output_df)) {
+      stop(
+        "times_vec must have length 1 or ncol(output_df)."
+      )
+    }
+
+    safe_group_mean <- function(x, index) {
+
+      if (!any(index)) {
+        return(NA_real_)
+      }
+
+      mean(
+        x[index],
+        na.rm = TRUE
+      )
+    }
+
+    weighted_finite_mean <- function(
+        values,
+        weights
+    ) {
+
+      values <- suppressWarnings(
+        as.numeric(values)
+      )
+
+      weights <- suppressWarnings(
+        as.numeric(weights)
+      )
+
+      valid <- is.finite(values) &
+        is.finite(weights) &
+        weights > 0
+
+      if (!any(valid)) {
+        return(NA_real_)
+      }
+
+      weighted.mean(
+        values[valid],
+        weights[valid]
+      )
+    }
+
+    # ----------------------------------------------------------
+    # Define the evaluation groups
+    # ----------------------------------------------------------
+
+    if (use_intersectional_R) {
+
+      group_specs <- list(
+        list(
+          key = "X1_0__X2_le0",
+          label = "x_1 = 0 and x_2 <= 0",
+          index = data_test$X1 == 0 &
+            data_test$X2 <= 0
+        ),
+        list(
+          key = "X1_0__X2_gt0",
+          label = "x_1 = 0 and x_2 > 0",
+          index = data_test$X1 == 0 &
+            data_test$X2 > 0
+        ),
+        list(
+          key = "X1_1__X2_le0",
+          label = "x_1 = 1 and x_2 <= 0",
+          index = data_test$X1 == 1 &
+            data_test$X2 <= 0
+        ),
+        list(
+          key = "X1_1__X2_gt0",
+          label = "x_1 = 1 and x_2 > 0",
+          index = data_test$X1 == 1 &
+            data_test$X2 > 0
+        )
+      )
+
+      R_scheme <- "X1-by-X2-sign"
+
+    } else {
+
+      group_specs <- list(
+        list(
+          key = "X1_0",
+          label = "x_1 = 0",
+          index = data_test$X1 == 0
+        ),
+        list(
+          key = "X1_1",
+          label = "x_1 = 1",
+          index = data_test$X1 == 1
+        )
+      )
+
+      R_scheme <- "X1"
+    }
+
+    # ----------------------------------------------------------
+    # Coverage and lower-bound metrics
+    # ----------------------------------------------------------
+
+    cov_marg <- apply(
+      output_df,
+      2,
+      function(x) {
+        mean(
+          T_test >= x,
+          na.rm = TRUE
+        )
+      }
+    )
+
+    simulen <- apply(
+      output_df,
+      2,
+      mean,
+      na.rm = TRUE
+    )
+
+    group_coverage <- list()
+    group_lower_bound_mean <- list()
+
+    for (group_spec in group_specs) {
+
+      current_index <- group_spec$index
+      current_key <- group_spec$key
+
+      group_coverage[[current_key]] <- apply(
+        output_df,
+        2,
+        function(x) {
+          safe_group_mean(
+            T_test >= x,
+            current_index
+          )
+        }
+      )
+
+      group_lower_bound_mean[[current_key]] <- apply(
+        output_df,
+        2,
+        function(x) {
+          safe_group_mean(
+            x,
+            current_index
+          )
+        }
+      )
+    }
+
+    metrics <- data.frame(
+      "method" = method_names,
+      "setting" = setting,
+      "censoring model" = sc_method,
+      "augmentation model" = augmentation_method,
+      "event-time scale" = if (
+        homoscedastic_event
+      ) {
+        "constant"
+      } else {
+        "group-varying"
+      },
+      "R scheme" = R_scheme,
+      "Marginal coverage" = cov_marg,
+      "true test-set miscoverage" = 1 - cov_marg,
+      "lower bound values mean" = simulen,
+      "computation time" = times_vec,
+      check.names = FALSE,
+      row.names = NULL
+    )
+
+    # Add the group-specific coverage columns.
+    for (group_spec in group_specs) {
+
+      metrics[[
+        paste0(
+          "group coverage for ",
+          group_spec$label
+        )
+      ]] <- group_coverage[[
+        group_spec$key
+      ]]
+    }
+
+    # Add the group-specific lower-bound columns.
+    for (group_spec in group_specs) {
+
+      metrics[[
+        paste0(
+          "lower bound mean for ",
+          group_spec$label
+        )
+      ]] <- group_lower_bound_mean[[
+        group_spec$key
+      ]]
+    }
+
+    # ----------------------------------------------------------
+    # Calibration diagnostic columns
+    # ----------------------------------------------------------
+
+    overall_diagnostic_columns <- c(
+      "selected calibration level",
+      "estimated calibration risk",
+      "absolute calibration-to-test risk error",
+      "fraction of censoring probabilities truncated at eta"
+    )
+
+    group_diagnostic_columns <- unlist(
+      lapply(
+        group_specs,
+        function(group_spec) {
+          c(
+            paste0(
+              "selected calibration level for ",
+              group_spec$label
+            ),
+            paste0(
+              "estimated calibration risk for ",
+              group_spec$label
+            ),
+            paste0(
+              "absolute calibration-to-test risk error for ",
+              group_spec$label
+            )
+          )
+        }
+      ),
+      use.names = FALSE
+    )
+
+    metrics[
+      c(
+        overall_diagnostic_columns,
+        group_diagnostic_columns
+      )
+    ] <- NA_real_
+
+    # ----------------------------------------------------------
+    # Fill the calibration diagnostics
+    # ----------------------------------------------------------
+
+    if (!is.null(calibration_diagnostics)) {
+
+      if (
+        !"method" %in%
+          colnames(calibration_diagnostics)
+      ) {
+        stop(
+          "calibration_diagnostics must contain a method column."
+        )
+      }
+
+      diagnostic_group_column <- if (
+        "R_label" %in%
+          colnames(calibration_diagnostics)
+      ) {
+        "R_label"
+      } else if (
+        "subgroup" %in%
+          colnames(calibration_diagnostics)
+      ) {
+        "subgroup"
+      } else {
+        stop(
+          paste0(
+            "calibration_diagnostics must contain either ",
+            "R_label or subgroup."
+          )
+        )
+      }
+
+      diagnostic_R_labels <- as.character(
+        calibration_diagnostics[[
+          diagnostic_group_column
+        ]]
+      )
+
+      # Backward compatibility for the original two groups.
+      if (!use_intersectional_R) {
+
+        diagnostic_R_labels[
+          diagnostic_R_labels %in%
+            c("0", "X1=0", "X1_0")
+        ] <- "X1_0"
+
+        diagnostic_R_labels[
+          diagnostic_R_labels %in%
+            c("1", "X1=1", "X1_1")
+        ] <- "X1_1"
+      }
+
+      calibration_diagnostics$R_label_internal <-
+        diagnostic_R_labels
+
+      for (
+        row_idx in seq_len(
+          nrow(metrics)
+        )
+      ) {
+
+        method_name <- method_names_original[
+          row_idx
+        ]
+
+        method_diag <- calibration_diagnostics[
+          calibration_diagnostics$method ==
+            method_name,
+          ,
+          drop = FALSE
+        ]
+
+        if (nrow(method_diag) == 0L) {
+          next
+        }
+
+        if (
+          !"n_calib" %in%
+            colnames(method_diag)
+        ) {
+          method_diag$n_calib <- 1
+        }
+
+        # Overall calibration summaries,
+        # weighted by the calibration group sizes.
+        metrics[[
+          "selected calibration level"
+        ]][row_idx] <- weighted_finite_mean(
+          method_diag$
+            selected_calibration_level,
+          method_diag$n_calib
+        )
+
+        metrics[[
+          "estimated calibration risk"
+        ]][row_idx] <- weighted_finite_mean(
+          method_diag$
+            estimated_calibration_risk,
+          method_diag$n_calib
+        )
+
+        metrics[[
+          paste0(
+            "fraction of censoring ",
+            "probabilities truncated at eta"
+          )
+        ]][row_idx] <- weighted_finite_mean(
+          method_diag$
+            fraction_censoring_probabilities_truncated,
+          method_diag$n_calib
+        )
+
+        metrics[[
+          "absolute calibration-to-test risk error"
+        ]][row_idx] <- abs(
+          metrics[[
+            "estimated calibration risk"
+          ]][row_idx] -
+            metrics[[
+              "true test-set miscoverage"
+            ]][row_idx]
+        )
+
+        # Group-specific diagnostics.
+        for (group_spec in group_specs) {
+
+          group_diag <- method_diag[
+            method_diag$R_label_internal ==
+              group_spec$key,
+            ,
+            drop = FALSE
+          ]
+
+          if (nrow(group_diag) == 0L) {
+            next
+          }
+
+          selected_level_column <- paste0(
+            "selected calibration level for ",
+            group_spec$label
+          )
+
+          estimated_risk_column <- paste0(
+            "estimated calibration risk for ",
+            group_spec$label
+          )
+
+          risk_error_column <- paste0(
+            paste0(
+              "absolute calibration-to-test ",
+              "risk error for "
+            ),
+            group_spec$label
+          )
+
+          coverage_column <- paste0(
+            "group coverage for ",
+            group_spec$label
+          )
+
+          metrics[[
+            selected_level_column
+          ]][row_idx] <- weighted_finite_mean(
+            group_diag$
+              selected_calibration_level,
+            group_diag$n_calib
+          )
+
+          metrics[[
+            estimated_risk_column
+          ]][row_idx] <- weighted_finite_mean(
+            group_diag$
+              estimated_calibration_risk,
+            group_diag$n_calib
+          )
+
+          metrics[[
+            risk_error_column
+          ]][row_idx] <- abs(
+            metrics[[
+              estimated_risk_column
+            ]][row_idx] -
+              (
+                1 -
+                  metrics[[
+                    coverage_column
+                  ]][row_idx]
+              )
+          )
+        }
+      }
+    }
+
+    metrics
+  }
 
   ########################################
   ## APPROACH 1: Joint Modeling
@@ -359,25 +865,130 @@ simu <- function(seed, setting, only_cams = FALSE,
   ########################################
   ## APPROACH 2: Subgroup Modeling
   ########################################
+
   if (!only_cams) {
-    cat("========== Executing Approach 2: Subgroup X1 = 0 ==========\n")
-    res_0 <- run_pipeline(data_fit[data_fit$X1 == 0, , drop=FALSE],
-                          data_calib[data_calib$X1 == 0, , drop=FALSE],
-                          data_test[data_test$X1 == 0, , drop=FALSE],
-                          xnames_sub, alpha, seed, mod, "subgroup0")
-                                  
-    cat("========== Executing Approach 2: Subgroup X1 = 1 ==========\n")
-    res_1 <- run_pipeline(data_fit[data_fit$X1 == 1, , drop=FALSE],
-                          data_calib[data_calib$X1 == 1, , drop=FALSE],
-                          data_test[data_test$X1 == 1, , drop=FALSE],
-                          xnames_sub, alpha, seed, mod, "subgroup1")
-    
-    # Merge subgroup outputs to map exactly to the data_test row order
-    output_subgroup <- data.frame(matrix(ncol = ncol(res_0$output), nrow = nrow(data_test)))
-    colnames(output_subgroup) <- colnames(res_0$output)
-    output_subgroup[idx_test_0, ] <- res_0$output
-    output_subgroup[idx_test_1, ] <- res_1$output
-    times_subgroup <- res_0$times + res_1$times
+
+    subgroup_results <- vector(
+      "list",
+      length(R_levels)
+    )
+
+    names(subgroup_results) <- R_levels
+
+    output_subgroup <- NULL
+
+    for (r in R_levels) {
+
+      idx_fit_r <- R_fit == r
+      idx_calib_r <- R_calib == r
+      idx_test_r <- R_test == r
+
+      group_sizes <- c(
+        fit = sum(idx_fit_r),
+        calib = sum(idx_calib_r),
+        test = sum(idx_test_r)
+      )
+
+      cat(
+        sprintf(
+          paste0(
+            "\n========== Executing subgroup %s ",
+            "(fit=%d, calib=%d, test=%d) ==========\n"
+          ),
+          r,
+          group_sizes["fit"],
+          group_sizes["calib"],
+          group_sizes["test"]
+        )
+      )
+
+      if (any(group_sizes == 0L)) {
+        stop(
+          sprintf(
+            paste0(
+              "Subgroup %s is empty in at least one ",
+              "of fit/calibration/test samples."
+            ),
+            r
+          )
+        )
+      }
+
+      res_r <- run_pipeline(
+        sub_fit = data_fit[
+          idx_fit_r,
+          ,
+          drop = FALSE
+        ],
+        sub_calib = data_calib[
+          idx_calib_r,
+          ,
+          drop = FALSE
+        ],
+        sub_test = data_test[
+          idx_test_r,
+          ,
+          drop = FALSE
+        ],
+        xnames_to_use = xnames_sub,
+        alpha = alpha,
+        seed = seed,
+        mod = mod,
+        non_cams_mode = "subgroup"
+      )
+
+      subgroup_results[[r]] <- res_r
+
+      if (is.null(output_subgroup)) {
+
+        output_subgroup <- as.data.frame(
+          matrix(
+            NA_real_,
+            nrow = nrow(data_test),
+            ncol = ncol(res_r$output)
+          ),
+          check.names = FALSE
+        )
+
+        colnames(output_subgroup) <- colnames(
+          res_r$output
+        )
+
+      } else if (
+        !identical(
+          colnames(output_subgroup),
+          colnames(res_r$output)
+        )
+      ) {
+
+        stop(
+          sprintf(
+            "Output columns are inconsistent for subgroup %s.",
+            r
+          )
+        )
+      }
+
+      output_subgroup[
+        idx_test_r,
+        colnames(res_r$output)
+      ] <- res_r$output
+    }
+
+    # Sum computation times across all two or four subgroup fits.
+    times_subgroup <- Reduce(
+      `+`,
+      lapply(
+        subgroup_results,
+        function(result) result$times
+      )
+    )
+
+    if (anyNA(output_subgroup)) {
+      warning(
+        "Some subgroup baseline predictions are NA."
+      )
+    }
   }
 
 
@@ -386,6 +997,7 @@ simu <- function(seed, setting, only_cams = FALSE,
   ########################################
   cat("========== Executing Approach 3: CAMS ==========\n")
   start_time_cams <- proc.time()[3]
+
   cams_res <- cams(
     x = data_test[, xnames, drop = FALSE],
     p = p,
@@ -398,184 +1010,86 @@ simu <- function(seed, setting, only_cams = FALSE,
     use_oracle_sc = use_oracle_sc,
     augmentation_method = augmentation_method,
     setting = setting,
-    homoscedastic_event = homoscedastic_event
+    homoscedastic_event = homoscedastic_event,
+    use_intersectional_R = use_intersectional_R
   )
-  time_cams <- proc.time()[3] - start_time_cams + time_mdl0
-  cat(sprintf("CAMS trained in %.2f seconds.\n", time_cams))
 
-  # start_time_cams <- proc.time()[3]
-  # local_cams_res <- new_cams(
+  # local_cams <- data.frame(check.names = FALSE)
+  # for(audit_fraction in c(0.1, 0.2, 0.3, 0.4)) {
+  #   calib_split <- local_stratified_calibration_split(
+  #     data_calib = data_calib,
+  #     audit_fraction = audit_fraction,
+  #     split_seed = seed,
+  #     group_name = "X1"
+  #   )
+  #   data_audit <- calib_split$audit
+  #   data_final_calib <- calib_split$final_calibration
+
+  #   start_time_local_cams <- proc.time()[3]
+
+  #   local_cams_res <- cams_local_ipcw(
+  #     x = data_test[, xnames, drop = FALSE],
+  #     p = p,
+  #     len_x = nrow(data_test),
+  #     xnames = xnames,
+  #     data_fit = data_fit,
+  #     data_calib = data_calib,
+  #     mdl0 = mdl0,
+  #     alpha = alpha,
+  #     data_audit = data_audit,
+  #     data_local_calib = data_final_calib,
+
+  #     calibration_split_seed = seed,
+
+  #     mapping_log_dir = file.path(
+  #       paste0("../local_mapping", audit_fraction),
+  #       paste0("setting_", setting),
+  #       paste0("seed_", seed)
+  #     )
+  #   )
+
+  # cams_res0.2 <- cams(
   #   x = data_test[, xnames, drop = FALSE],
   #   p = p,
   #   len_x = nrow(data_test),
   #   xnames = xnames,
   #   data_fit = data_fit,
-  #   data_calib = data_calib,
+  #   data_calib = data_final_calib0.2,
   #   mdl0 = res_joint$mdl0,
   #   alpha = alpha,
-  #   use_oracle_sc = use_oracle_sc
-  # )
-  # local_time_cams <- proc.time()[3] - start_time_cams
-  # cat(sprintf("Local CAMS trained in %.2f seconds.\n", local_time_cams))
-
-  # save_local_cams_info_allseeds(
-  #   cams_res = local_cams_res,
+  #   use_oracle_sc = use_oracle_sc,
+  #   augmentation_method = augmentation_method,
   #   setting = setting,
-  #   seed = seed
+  #   homoscedastic_event = homoscedastic_event
   # )
 
-  compute_metrics <- function(output_df, times_vec = NULL, suffix_label = NULL,
-                              calibration_diagnostics = NULL) {
+  #   # df_cams0.2 <- compute_metrics(
+  #   #   cams_res0.2$output,
+  #   #   times_vec = time_cams,
+  #   #   suffix_label = "(20%)",
+  #   #   calibration_diagnostics = cams_res0.2$diagnostics
+  #   # )
 
-    output_df[] <- lapply(
-      output_df,
-      function(z) {
-        z[is.finite(z)] <- pmax(z[is.finite(z)], 0)
-        z
-      }
-    )
+  #   local_df_cams <- compute_metrics(
+  #     local_cams_res$output,
+  #     times_vec = proc.time()[3] - start_time_local_cams + time_mdl0,
+  #     suffix_label = sprintf("(%d%%)", audit_fraction * 100),
+  #   )
 
-    method_names <- colnames(output_df)
+  #   local_cams <- rbind(local_cams, local_df_cams)
+  # }
 
-    if (!is.null(suffix_label)) {
-      method_names <- paste(method_names, suffix_label)
-    }
-
-    if (is.null(times_vec)) {
-      times_vec <- rep(NA_real_, ncol(output_df))
-    }
-
-    if (length(times_vec) == 1) {
-      times_vec <- rep(times_vec, ncol(output_df))
-    }
-
-    cov_marg <- apply(output_df, 2, function(x) {
-      mean(T_test >= x, na.rm = TRUE)
-    })
-
-    cov_grp0 <- apply(output_df, 2, function(x) {
-      mean(T_test[idx_test_0] >= x[idx_test_0], na.rm = TRUE)
-    })
-
-    cov_grp1 <- apply(output_df, 2, function(x) {
-      mean(T_test[idx_test_1] >= x[idx_test_1], na.rm = TRUE)
-    })
-
-    simulen <- apply(output_df, 2, mean, na.rm = TRUE)
-
-    simulen_grp0 <- apply(output_df, 2, function(x) {
-      mean(x[idx_test_0], na.rm = TRUE)
-    })
-
-    simulen_grp1 <- apply(output_df, 2, function(x) {
-      mean(x[idx_test_1], na.rm = TRUE)
-    })
-
-    metrics <- data.frame(
-      "method"                       = method_names,
-      "setting"                      = setting,
-      "censoring model"              = sc_method,
-      "augmentation model"           = augmentation_method,
-      "event-time scale"             = if (homoscedastic_event) "constant" else "group-varying",
-      "group coverage for x_1 = 0"   = cov_grp0,
-      "group coverage for x_1 = 1"   = cov_grp1,
-      "Marginal coverage"            = cov_marg,
-      "true test-set miscoverage"    = 1 - cov_marg,
-      "lower bound mean for x_1 = 0" = simulen_grp0,
-      "lower bound mean for x_1 = 1" = simulen_grp1,
-      "lower bound values mean"      = simulen,
-      "computation time"             = times_vec,
-      check.names = FALSE,
-      row.names = NULL
-    )
-
-    diagnostic_columns <- c(
-      "selected calibration level",
-      "selected calibration level for x_1 = 0",
-      "selected calibration level for x_1 = 1",
-      "estimated calibration risk",
-      "estimated calibration risk for x_1 = 0",
-      "estimated calibration risk for x_1 = 1",
-      "absolute calibration-to-test risk error",
-      "absolute calibration-to-test risk error for x_1 = 0",
-      "absolute calibration-to-test risk error for x_1 = 1",
-      "fraction of censoring probabilities truncated at eta"
-    )
-    metrics[diagnostic_columns] <- NA_real_
-
-    if (!is.null(calibration_diagnostics)) {
-      for (row_idx in seq_len(nrow(metrics))) {
-        method_name <- colnames(output_df)[row_idx]
-        method_diag <- calibration_diagnostics[
-          calibration_diagnostics$method == method_name,
-          ,
-          drop = FALSE
-        ]
-
-        if (nrow(method_diag) == 0L) next
-
-        diag0 <- method_diag[method_diag$subgroup == 0, , drop = FALSE]
-        diag1 <- method_diag[method_diag$subgroup == 1, , drop = FALSE]
-        valid_weight <- is.finite(method_diag$n_calib) & method_diag$n_calib > 0
-
-        if (any(valid_weight)) {
-          metrics[["selected calibration level"]][row_idx] <- weighted.mean(
-            method_diag$selected_calibration_level[valid_weight],
-            method_diag$n_calib[valid_weight],
-            na.rm = TRUE
-          )
-          metrics[["estimated calibration risk"]][row_idx] <- weighted.mean(
-            method_diag$estimated_calibration_risk[valid_weight],
-            method_diag$n_calib[valid_weight],
-            na.rm = TRUE
-          )
-          metrics[["fraction of censoring probabilities truncated at eta"]][row_idx] <- weighted.mean(
-            method_diag$fraction_censoring_probabilities_truncated[valid_weight],
-            method_diag$n_calib[valid_weight],
-            na.rm = TRUE
-          )
-        }
-
-        if (nrow(diag0) == 1L) {
-          metrics[["selected calibration level for x_1 = 0"]][row_idx] <- diag0$selected_calibration_level
-          metrics[["estimated calibration risk for x_1 = 0"]][row_idx] <- diag0$estimated_calibration_risk
-        }
-        if (nrow(diag1) == 1L) {
-          metrics[["selected calibration level for x_1 = 1"]][row_idx] <- diag1$selected_calibration_level
-          metrics[["estimated calibration risk for x_1 = 1"]][row_idx] <- diag1$estimated_calibration_risk
-        }
-
-        metrics[["absolute calibration-to-test risk error"]][row_idx] <- abs(
-          metrics[["estimated calibration risk"]][row_idx] -
-            metrics[["true test-set miscoverage"]][row_idx]
-        )
-        metrics[["absolute calibration-to-test risk error for x_1 = 0"]][row_idx] <- abs(
-          metrics[["estimated calibration risk for x_1 = 0"]][row_idx] -
-            (1 - cov_grp0[row_idx])
-        )
-        metrics[["absolute calibration-to-test risk error for x_1 = 1"]][row_idx] <- abs(
-          metrics[["estimated calibration risk for x_1 = 1"]][row_idx] -
-            (1 - cov_grp1[row_idx])
-        )
-      }
-    }
-
-    metrics
-  }
+  time_cams <- proc.time()[3] - start_time_cams + time_mdl0
+  cat(sprintf("CAMS trained in %.2f seconds.\n", time_cams))
 
   df_cams <- compute_metrics(
     cams_res$output,
     times_vec = time_cams,
     suffix_label = NULL,
-    calibration_diagnostics = cams_res$diagnostics
+    calibration_diagnostics = cams_res$diagnostics,
+    use_intersectional_R = use_intersectional_R
   )
 
-  # local_df_cams <- compute_metrics(
-  #   local_cams_res$output,
-  #   times_vec = local_time_cams,
-  #   suffix_label = NULL
-  # )
-  
   ########################################
   ## Compute & Bind Final Results
   ########################################
@@ -583,273 +1097,22 @@ simu <- function(seed, setting, only_cams = FALSE,
     df_joint <- compute_metrics(
       res_joint$output,
       times_vec = res_joint$times,
-      suffix_label = "(Joint)"
+      suffix_label = "(Joint)",
+      use_intersectional_R = use_intersectional_R
     )
     df_subgroup <- compute_metrics(
       output_subgroup,
       times_vec = times_subgroup,
-      suffix_label = "(Subgroup)"
+      suffix_label = "(Subgroup)",
+      use_intersectional_R = use_intersectional_R
     )
     # Append CAMS to the final CSV output
     simu_out <- rbind(df_cams, df_joint, df_subgroup)
   } else {
-    # simu_out <- rbind(df_cams, local_df_cams)
+    # simu_out <- local_cams
     simu_out <- df_cams
   }
 
   rownames(simu_out) <- NULL
   return(simu_out)
-}
-
-save_local_cams_info_allseeds <- function(cams_res,
-                                          setting,
-                                          seed) {
-
-  diag_dir <- file.path("../local_cams_diagnostics")
-  dir.create(diag_dir, recursive = TRUE, showWarnings = FALSE)
-
-  lambda_file <- file.path(diag_dir, "selected_lambdas_all.csv")
-  risk_file <- file.path(diag_dir, "selected_risks_all.csv")
-  diagnostics_file <- file.path(diag_dir, "cell_diagnostics_all.csv")
-  summary_file <- file.path(diag_dir, "local_cams_summary_all.csv")
-
-  write_replace_seed <- function(new_df, file) {
-    if (nrow(new_df) == 0) {
-      return(invisible(NULL))
-    }
-
-    if (file.exists(file)) {
-      old_df <- read.csv(file, stringsAsFactors = FALSE)
-
-      # Remove old rows for this same setting and seed, so reruns do not duplicate
-      old_df <- old_df[!(old_df$setting == setting & old_df$seed == seed), , drop = FALSE]
-
-      common_cols <- union(names(old_df), names(new_df))
-
-      for (cc in setdiff(common_cols, names(old_df))) old_df[[cc]] <- NA
-      for (cc in setdiff(common_cols, names(new_df))) new_df[[cc]] <- NA
-
-      old_df <- old_df[, common_cols, drop = FALSE]
-      new_df <- new_df[, common_cols, drop = FALSE]
-
-      out_df <- rbind(old_df, new_df)
-    } else {
-      out_df <- new_df
-    }
-
-    write.csv(out_df, file, row.names = FALSE)
-  }
-
-  # --------------------------------------------------
-  # 1. Selected lambdas, long format
-  # --------------------------------------------------
-  lambda_rows <- list()
-
-  if (!is.null(cams_res$selected_lambdas)) {
-    for (group_name in names(cams_res$selected_lambdas)) {
-
-      group_obj <- cams_res$selected_lambdas[[group_name]]
-
-      if (is.null(group_obj)) next
-
-      for (method_name in names(group_obj)) {
-
-        lambda_vec <- group_obj[[method_name]]
-
-        if (is.null(lambda_vec)) {
-          lambda_rows[[length(lambda_rows) + 1]] <- data.frame(
-            setting = setting,
-            seed = seed,
-            group = group_name,
-            method = method_name,
-            cell = NA_character_,
-            lambda = NA_real_
-          )
-        } else {
-          lambda_rows[[length(lambda_rows) + 1]] <- data.frame(
-            setting = setting,
-            seed = seed,
-            group = group_name,
-            method = method_name,
-            cell = names(lambda_vec),
-            lambda = as.numeric(lambda_vec),
-            row.names = NULL
-          )
-        }
-      }
-    }
-  }
-
-  lambda_df <- if (length(lambda_rows) > 0) {
-    do.call(rbind, lambda_rows)
-  } else {
-    data.frame()
-  }
-
-  write_replace_seed(lambda_df, lambda_file)
-
-  # --------------------------------------------------
-  # 2. Selected risks, long format
-  # --------------------------------------------------
-  risk_rows <- list()
-
-  if (!is.null(cams_res$selected_risks)) {
-    for (group_name in names(cams_res$selected_risks)) {
-
-      group_obj <- cams_res$selected_risks[[group_name]]
-
-      if (is.null(group_obj)) next
-
-      for (method_name in names(group_obj)) {
-
-        risk_obj <- group_obj[[method_name]]
-
-        if (is.null(risk_obj)) {
-          risk_rows[[length(risk_rows) + 1]] <- data.frame(
-            setting = setting,
-            seed = seed,
-            group = group_name,
-            method = method_name,
-            risk_name = NA_character_,
-            risk_value = NA_real_
-          )
-
-        } else {
-          risk_vec <- unlist(risk_obj)
-
-          risk_rows[[length(risk_rows) + 1]] <- data.frame(
-            setting = setting,
-            seed = seed,
-            group = group_name,
-            method = method_name,
-            risk_name = names(risk_vec),
-            risk_value = as.numeric(risk_vec),
-            row.names = NULL
-          )
-        }
-      }
-    }
-  }
-
-  risk_df <- if (length(risk_rows) > 0) {
-    do.call(rbind, risk_rows)
-  } else {
-    data.frame()
-  }
-
-  write_replace_seed(risk_df, risk_file)
-
-  # --------------------------------------------------
-  # 3. Cell diagnostics
-  # --------------------------------------------------
-  diag_rows <- list()
-
-  if (!is.null(cams_res$diagnostics)) {
-    for (group_name in names(cams_res$diagnostics)) {
-
-      diag_df <- cams_res$diagnostics[[group_name]]
-
-      if (is.null(diag_df) || nrow(diag_df) == 0) next
-
-      diag_df$setting <- setting
-      diag_df$seed <- seed
-      diag_df$group <- group_name
-
-      first_cols <- c("setting", "seed", "group")
-      diag_df <- diag_df[, c(first_cols, setdiff(names(diag_df), first_cols)), drop = FALSE]
-
-      diag_rows[[length(diag_rows) + 1]] <- diag_df
-    }
-  }
-
-  diagnostics_df <- if (length(diag_rows) > 0) {
-    do.call(rbind, diag_rows)
-  } else {
-    data.frame()
-  }
-
-  write_replace_seed(diagnostics_df, diagnostics_file)
-
-  # --------------------------------------------------
-  # 4. Summary file, one row per seed/group/method
-  # --------------------------------------------------
-  summary_rows <- list()
-
-  if (!is.null(cams_res$selected_lambdas)) {
-    for (group_name in names(cams_res$selected_lambdas)) {
-
-      lambda_group <- cams_res$selected_lambdas[[group_name]]
-      risk_group <- cams_res$selected_risks[[group_name]]
-
-      if (is.null(lambda_group)) next
-
-      for (method_name in names(lambda_group)) {
-
-        lambda_vec <- lambda_group[[method_name]]
-
-        lambda_x2_le <- NA_real_
-        lambda_x2_gt <- NA_real_
-
-        if (!is.null(lambda_vec)) {
-          if ("X2<=0" %in% names(lambda_vec)) {
-            lambda_x2_le <- as.numeric(lambda_vec["X2<=0"])
-          }
-          if ("X2>0" %in% names(lambda_vec)) {
-            lambda_x2_gt <- as.numeric(lambda_vec["X2>0"])
-          }
-        }
-
-        group_risk <- NA_real_
-        cell_risk_le <- NA_real_
-        cell_risk_gt <- NA_real_
-
-        if (!is.null(risk_group) && method_name %in% names(risk_group)) {
-          risk_obj <- risk_group[[method_name]]
-
-          if (!is.null(risk_obj)) {
-            risk_vec <- unlist(risk_obj)
-
-            if ("group_risk" %in% names(risk_vec)) {
-              group_risk <- as.numeric(risk_vec["group_risk"])
-            }
-
-            if ("cell_risk_X2<=0" %in% names(risk_vec)) {
-              cell_risk_le <- as.numeric(risk_vec["cell_risk_X2<=0"])
-            }
-
-            if ("cell_risk_X2>0" %in% names(risk_vec)) {
-              cell_risk_gt <- as.numeric(risk_vec["cell_risk_X2>0"])
-            }
-          }
-        }
-
-        summary_rows[[length(summary_rows) + 1]] <- data.frame(
-          setting = setting,
-          seed = seed,
-          group = group_name,
-          method = method_name,
-          lambda_X2_le = lambda_x2_le,
-          lambda_X2_gt = lambda_x2_gt,
-          group_risk = group_risk,
-          cell_risk_X2_le = cell_risk_le,
-          cell_risk_X2_gt = cell_risk_gt
-        )
-      }
-    }
-  }
-
-  summary_df <- if (length(summary_rows) > 0) {
-    do.call(rbind, summary_rows)
-  } else {
-    data.frame()
-  }
-
-  write_replace_seed(summary_df, summary_file)
-
-  invisible(list(
-    lambda_file = lambda_file,
-    risk_file = risk_file,
-    diagnostics_file = diagnostics_file,
-    summary_file = summary_file
-  ))
 }
