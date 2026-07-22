@@ -5,7 +5,7 @@
 #SBATCH --time=3:02:00
 #SBATCH --cpus-per-task=48
 #SBATCH --mem=192G
-#SBATCH --array=1-10:1
+#SBATCH --array=1-100:10
 #SBATCH --output=sim_log_%A_%a.txt
 
 module load StdEnv/2023
@@ -13,14 +13,14 @@ module load r/4.5.0
 
 cd ~/scratch/CAMS/simulations
 
-SETTING_LIST="cams_vs_vanilla_lower_tail_hd_mild,cams_vs_vanilla_lower_tail_hd_main,cams_vs_vanilla_lower_tail_hd_strong,anti_aligned_cens,weibull_aft_anti_cens,var_shift_heavy_cens,high_survival_heavy_cens,surv_misspec"
+SETTING_LIST="rare_intersection_shared_weibull,basis_intersection_shared_weibull,mixture_intersection_shared_weibull"
 
 SC_METHODS="oracle"
 ONLY_CAMS=0
 AUGMENTATION_METHODS="same"
 HOMOSCEDASTIC_EVENT=0
 SC_NTREE=1000
-NUM_RUNS=1
+NUM_RUNS=10
 USE_INTERSECTIONAL_R=1
 
 Rscript run_sim.R \

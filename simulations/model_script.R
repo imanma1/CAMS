@@ -1,3 +1,82 @@
+draw_weibull_aft_time <- function(
+    mu_t,
+    sigma_t = 0.45
+) {
+
+  n <- length(mu_t)
+
+  if (length(sigma_t) == 1L) {
+    sigma_t <- rep(sigma_t, n)
+  }
+
+  if (length(sigma_t) != n) {
+    stop("sigma_t must have length 1 or the same length as mu_t.")
+  }
+
+  u <- pmin(
+    pmax(runif(n), 1e-12),
+    1 - 1e-12
+  )
+
+  eps_t <- log(-log(u))
+
+  exp(
+    mu_t +
+      sigma_t * eps_t
+  )
+}
+
+
+shared_weibull_mu_20 <- function(x) {
+
+  x <- as.data.frame(x)
+
+  required_names <- paste0("X", 1:20)
+
+  missing_names <- setdiff(
+    required_names,
+    colnames(x)
+  )
+
+  if (length(missing_names) > 0L) {
+    stop(
+      sprintf(
+        "The shared 20-dimensional event model is missing: %s",
+        paste(missing_names, collapse = ", ")
+      )
+    )
+  }
+
+  # Coefficients 0.05 * (-1)^j for j = 5, ..., 20.
+  beta_dense <- 0.05 * (-1)^(5:20)
+
+  dense_score <- as.numeric(
+    as.matrix(
+      x[, paste0("X", 5:20), drop = FALSE]
+    ) %*% beta_dense
+  )
+
+  2.40 +
+    0.50 * x$X1 +
+    0.70 * x$X2 -
+    0.50 * x$X3 +
+    0.30 * x$X4 +
+    dense_score
+}
+
+
+basis_shared_weibull_mu <- function(x) {
+
+  x <- as.data.frame(x)
+
+  2.20 +
+    0.60 * x$X2 -
+    0.40 * x$X3 +
+    0.25 * x$X4 +
+    0.30 * x$X5 +
+    0.45 * x$X1
+}
+
 model_generating_fun <- function(n_train, n_calib, n_test,
                                  setting, xmin, xmax,
                                  bernoulli_prob = 0.1,
@@ -735,6 +814,185 @@ model_generating_fun <- function(n_train, n_calib, n_test,
 
       exp(log_c)
     }
+  } else if (
+    setting == "rare_intersection_shared_weibull"
+  ) {
+
+    # ------------------------------------------------------------
+    # Rare intersectional groups with a shared 20-dimensional
+    # Weibull AFT event model.
+    #
+    # Intended configuration:
+    # bernoulli_prob = 0.10
+    # ------------------------------------------------------------
+
+    p <- 20
+
+    mu_t_fun <- function(x) {
+      shared_weibull_mu_20(x)
+    }
+
+    gen_t <- function(x) {
+
+      draw_weibull_aft_time(
+        mu_t = mu_t_fun(x),
+        sigma_t = 0.45
+      )
+    }
+
+    gen_c <- function(x) {
+
+      group_1_positive <- as.numeric(
+        x[, 1] == 1 &
+          x[, 2] > 0
+      )
+
+      group_1_nonpositive <- as.numeric(
+        x[, 1] == 1 &
+          x[, 2] <= 0
+      )
+
+      group_0_positive <- as.numeric(
+        x[, 1] == 0 &
+          x[, 2] > 0
+      )
+
+      mu_c <- 3.20 +
+        0.20 * x[, 3] -
+        0.60 * group_1_positive -
+        0.30 * group_1_nonpositive -
+        0.20 * group_0_positive
+
+      exp(
+        mu_c +
+          0.50 * rnorm(nrow(x))
+      )
+    }
+  } else if (
+    setting == "basis_intersection_shared_weibull"
+  ) {
+
+    # ------------------------------------------------------------
+    # The nonlinear structure is supplied to the fitted models as:
+    #
+    # X4 = X2^2
+    # X5 = sin(X3)
+    #
+    # The pooled event model is therefore a correctly specified
+    # linear Weibull AFT model in X1, ..., X5.
+    # ------------------------------------------------------------
+
+    p <- 5
+
+    mu_t_fun <- function(x) {
+      basis_shared_weibull_mu(x)
+    }
+
+    gen_t <- function(x) {
+
+      draw_weibull_aft_time(
+        mu_t = mu_t_fun(x),
+        sigma_t = 0.45
+      )
+    }
+
+    gen_c <- function(x) {
+
+      group_1_positive <- as.numeric(
+        x[, 1] == 1 &
+          x[, 2] > 0
+      )
+
+      group_0_positive <- as.numeric(
+        x[, 1] == 0 &
+          x[, 2] > 0
+      )
+
+      mu_c <- 3.00 -
+        0.65 * group_1_positive -
+        0.35 * group_0_positive +
+        0.25 * x[, 3]
+
+      exp(
+        mu_c +
+          0.50 * rnorm(nrow(x))
+      )
+    }
+  } else if (
+    setting == "mixture_intersection_shared_weibull"
+  ) {
+
+    # ------------------------------------------------------------
+    # Shared correctly specified Weibull AFT event model, with
+    # censoring generated from an early/late lognormal mixture.
+    #
+    # The mixture depends on intersectional group membership.
+    # ------------------------------------------------------------
+
+    p <- 20
+
+    mu_t_fun <- function(x) {
+      shared_weibull_mu_20(x)
+    }
+
+    gen_t <- function(x) {
+
+      draw_weibull_aft_time(
+        mu_t = mu_t_fun(x),
+        sigma_t = 0.45
+      )
+    }
+
+    gen_c <- function(x) {
+
+      n <- nrow(x)
+      mu_t <- mu_t_fun(x)
+
+      group_1_positive <- as.numeric(
+        x[, 1] == 1 &
+          x[, 2] > 0
+      )
+
+      group_0_positive <- as.numeric(
+        x[, 1] == 0 &
+          x[, 2] > 0
+      )
+
+      prob_early <- 0.08 +
+        0.25 * group_1_positive +
+        0.12 * group_0_positive
+
+      prob_early <- pmin(
+        pmax(prob_early, 0),
+        1
+      )
+
+      early_component <- rbinom(
+        n = n,
+        size = 1,
+        prob = prob_early
+      )
+
+      early_log_c <- (
+        mu_t -
+          0.35 +
+          0.30 * rnorm(n)
+      )
+
+      late_log_c <- (
+        mu_t +
+          1.00 +
+          0.40 * rnorm(n)
+      )
+
+      log_c <- ifelse(
+        early_component == 1,
+        early_log_c,
+        late_log_c
+      )
+
+      exp(log_c)
+    }
   } else {
     stop(sprintf("Unknown setting: %s", setting))
   }
@@ -755,10 +1013,22 @@ model_generating_fun <- function(n_train, n_calib, n_test,
     X <- data.frame(X1 = X_bern)
   }
 
-  # Enforce consistent standard column names (X1, X2, ... Xp)
-  colnames(X) <- paste0("X", 1:p)
+  # Enforce consistent standard column names.
+  colnames(X) <- paste0(
+    "X",
+    1:p
+  )
 
-  # Calculate Event Times and Censoring Times based on the selected setting formulas
+  # Construct the supplied nonlinear basis for this setting.
+  if (
+    setting == "basis_intersection_shared_weibull"
+  ) {
+
+    X$X4 <- X$X2^2
+    X$X5 <- sin(X$X3)
+  }
+
+  # Calculate event and censoring times.
   T_time <- gen_t(X)
   C_time <- gen_c(X)
 

@@ -361,6 +361,49 @@ mu_c_oracle <- function(X, setting) {
     mu_c <- 3.20 -
       0.10 * X$X1 -
       0.10 * score
+  } else if (
+    setting == "rare_intersection_shared_weibull"
+  ) {
+
+    group_1_positive <- as.numeric(
+      X$X1 == 1 &
+        X$X2 > 0
+    )
+
+    group_1_nonpositive <- as.numeric(
+      X$X1 == 1 &
+        X$X2 <= 0
+    )
+
+    group_0_positive <- as.numeric(
+      X$X1 == 0 &
+        X$X2 > 0
+    )
+
+    mu_c <- 3.20 +
+      0.20 * X$X3 -
+      0.60 * group_1_positive -
+      0.30 * group_1_nonpositive -
+      0.20 * group_0_positive
+
+  } else if (
+    setting == "basis_intersection_shared_weibull"
+  ) {
+
+    group_1_positive <- as.numeric(
+      X$X1 == 1 &
+        X$X2 > 0
+    )
+
+    group_0_positive <- as.numeric(
+      X$X1 == 0 &
+        X$X2 > 0
+    )
+
+    mu_c <- 3.00 -
+      0.65 * group_1_positive -
+      0.35 * group_0_positive +
+      0.25 * X$X3
   } else {
     stop(sprintf("Unknown setting for oracle S_C: %s", setting))
   }
@@ -368,11 +411,229 @@ mu_c_oracle <- function(X, setting) {
   as.numeric(mu_c)
 }
 
+two_component_lognormal_survival <- function(
+    t,
+    mixture_probability,
+    first_mean,
+    first_sd,
+    second_mean,
+    second_sd
+) {
+
+  n <- length(mixture_probability)
+
+  if (
+    length(first_mean) != n ||
+      length(second_mean) != n
+  ) {
+    stop(
+      "Mixture probabilities and component means must have equal lengths."
+    )
+  }
+
+  if (is.matrix(t)) {
+
+    if (nrow(t) != n) {
+      stop(
+        paste0(
+          "For matrix t, nrow(t) must equal ",
+          "the number of observations."
+        )
+      )
+    }
+
+    k <- ncol(t)
+
+    probability_matrix <- matrix(
+      mixture_probability,
+      nrow = n,
+      ncol = k
+    )
+
+    first_mean_matrix <- matrix(
+      first_mean,
+      nrow = n,
+      ncol = k
+    )
+
+    second_mean_matrix <- matrix(
+      second_mean,
+      nrow = n,
+      ncol = k
+    )
+
+    log_t <- log(
+      pmax(
+        t,
+        .Machine$double.xmin
+      )
+    )
+
+    first_survival <- 1 - pnorm(
+      (
+        log_t -
+          first_mean_matrix
+      ) / first_sd
+    )
+
+    second_survival <- 1 - pnorm(
+      (
+        log_t -
+          second_mean_matrix
+      ) / second_sd
+    )
+
+    survival_probability <- (
+      probability_matrix * first_survival +
+        (
+          1 - probability_matrix
+        ) * second_survival
+    )
+
+    survival_probability[t <= 0] <- 1
+
+  } else {
+
+    if (length(t) == 1L) {
+      t <- rep(t, n)
+    }
+
+    if (length(t) != n) {
+      stop(
+        paste0(
+          "Length of t must equal the ",
+          "number of observations."
+        )
+      )
+    }
+
+    log_t <- log(
+      pmax(
+        t,
+        .Machine$double.xmin
+      )
+    )
+
+    first_survival <- 1 - pnorm(
+      (
+        log_t -
+          first_mean
+      ) / first_sd
+    )
+
+    second_survival <- 1 - pnorm(
+      (
+        log_t -
+          second_mean
+      ) / second_sd
+    )
+
+    survival_probability <- (
+      mixture_probability * first_survival +
+        (
+          1 - mixture_probability
+        ) * second_survival
+    )
+
+    survival_probability[t <= 0] <- 1
+  }
+
+  survival_probability[
+    !is.finite(survival_probability)
+  ] <- 0
+
+  pmin(
+    pmax(
+      survival_probability,
+      0
+    ),
+    1
+  )
+}
 
 oracle_sc_prob <- function(oracle_mdl, data, t) {
 
   X <- as.data.frame(data)
   setting <- oracle_mdl$setting
+
+  if (
+    setting == "mixture_intersection_shared_weibull"
+  ) {
+
+    required_names <- paste0(
+      "X",
+      1:20
+    )
+
+    missing_names <- setdiff(
+      required_names,
+      colnames(X)
+    )
+
+    if (length(missing_names) > 0L) {
+      stop(
+        sprintf(
+          paste0(
+            "Oracle mixture censoring model ",
+            "is missing columns: %s"
+          ),
+          paste(
+            missing_names,
+            collapse = ", "
+          )
+        )
+      )
+    }
+
+    beta_dense <- 0.05 * (-1)^(5:20)
+
+    dense_score <- as.numeric(
+      as.matrix(
+        X[
+          ,
+          paste0("X", 5:20),
+          drop = FALSE
+        ]
+      ) %*% beta_dense
+    )
+
+    mu_t <- 2.40 +
+      0.50 * X$X1 +
+      0.70 * X$X2 -
+      0.50 * X$X3 +
+      0.30 * X$X4 +
+      dense_score
+
+    group_1_positive <- as.numeric(
+      X$X1 == 1 &
+        X$X2 > 0
+    )
+
+    group_0_positive <- as.numeric(
+      X$X1 == 0 &
+        X$X2 > 0
+    )
+
+    prob_early <- 0.08 +
+      0.25 * group_1_positive +
+      0.12 * group_0_positive
+
+    prob_early <- pmin(
+      pmax(prob_early, 0),
+      1
+    )
+
+    return(
+      two_component_lognormal_survival(
+        t = t,
+        mixture_probability = prob_early,
+        first_mean = mu_t - 0.35,
+        first_sd = 0.30,
+        second_mean = mu_t + 1.00,
+        second_sd = 0.40
+      )
+    )
+  }
 
   mixture_settings <- c(
     "cams_vs_vanilla_lower_tail_hd_mild",
