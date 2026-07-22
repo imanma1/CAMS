@@ -77,6 +77,105 @@ basis_shared_weibull_mu <- function(x) {
     0.45 * x$X1
 }
 
+draw_min_extreme_value_time <- function(
+    mu_t,
+    sigma_t
+) {
+
+  n <- length(mu_t)
+
+  if (length(sigma_t) == 1L) {
+    sigma_t <- rep(sigma_t, n)
+  }
+
+  if (length(sigma_t) != n) {
+    stop(
+      paste0(
+        "sigma_t must have length one or ",
+        "the same length as mu_t."
+      )
+    )
+  }
+
+  u <- pmin(
+    pmax(
+      runif(n),
+      1e-12
+    ),
+    1 - 1e-12
+  )
+
+  eps_t <- log(
+    -log(u)
+  )
+
+  exp(
+    mu_t +
+      sigma_t * eps_t
+  )
+}
+
+
+shared_hd_event_location <- function(x) {
+
+  x <- as.data.frame(x)
+
+  required_names <- paste0(
+    "X",
+    1:75
+  )
+
+  missing_names <- setdiff(
+    required_names,
+    colnames(x)
+  )
+
+  if (length(missing_names) > 0L) {
+    stop(
+      sprintf(
+        "The shared HD event model is missing: %s",
+        paste(
+          missing_names,
+          collapse = ", "
+        )
+      )
+    )
+  }
+
+  beta_dense <- 0.03 * rep(
+    c(1, -1),
+    length.out = 75 - 4
+  )
+
+  dense_score <- as.numeric(
+    as.matrix(
+      x[
+        ,
+        paste0("X", 5:75),
+        drop = FALSE
+      ]
+    ) %*% beta_dense
+  )
+
+  2.60 +
+    0.80 * x$X1 +
+    0.60 * x$X2 -
+    0.50 * x$X3 +
+    0.30 * x$X4 +
+    dense_score
+}
+
+
+mild_intersection_censoring_location <- function(x) {
+
+  x <- as.data.frame(x)
+
+  3.25 -
+    0.15 * x$X1 -
+    0.10 * as.numeric(x$X2 > 0) +
+    0.15 * x$X3
+}
+
 model_generating_fun <- function(n_train, n_calib, n_test,
                                  setting, xmin, xmax,
                                  bernoulli_prob = 0.1,
@@ -992,6 +1091,218 @@ model_generating_fun <- function(n_train, n_calib, n_test,
       )
 
       exp(log_c)
+    }
+  } else if (
+    setting == "intersection_scale_shift_hd"
+  ) {
+
+    # ============================================================
+    # Shared high-dimensional event location, but four different
+    # lower-tail scales across the intersectional R groups.
+    #
+    # R1: X1 = 0, X2 <= 0  -> sigma = 0.30
+    # R2: X1 = 0, X2 >  0  -> sigma = 0.45
+    # R3: X1 = 1, X2 <= 0  -> sigma = 0.55
+    # R4: X1 = 1, X2 >  0  -> sigma = 0.85
+    #
+    # The censoring model is deliberately only mildly
+    # heterogeneous so the main difficulty is event-tail
+    # heterogeneity rather than positivity failure.
+    # ============================================================
+
+    p <- 75
+
+    mu_t_fun <- function(x) {
+      shared_hd_event_location(x)
+    }
+
+    sigma_t_fun <- function(x) {
+
+      x <- as.data.frame(x)
+
+      sigma_t <- rep(
+        NA_real_,
+        nrow(x)
+      )
+
+      group_00 <- (
+        x$X1 == 0 &
+          x$X2 <= 0
+      )
+
+      group_01 <- (
+        x$X1 == 0 &
+          x$X2 > 0
+      )
+
+      group_10 <- (
+        x$X1 == 1 &
+          x$X2 <= 0
+      )
+
+      group_11 <- (
+        x$X1 == 1 &
+          x$X2 > 0
+      )
+
+      sigma_t[group_00] <- 0.30
+      sigma_t[group_01] <- 0.45
+      sigma_t[group_10] <- 0.55
+      sigma_t[group_11] <- 0.85
+
+      if (anyNA(sigma_t)) {
+        stop(
+          paste0(
+            "Some observations were not assigned ",
+            "an event scale."
+          )
+        )
+      }
+
+      sigma_t
+    }
+
+    gen_t <- function(x) {
+
+      draw_min_extreme_value_time(
+        mu_t = mu_t_fun(x),
+        sigma_t = sigma_t_fun(x)
+      )
+    }
+
+    gen_c <- function(x) {
+
+      mu_c <- mild_intersection_censoring_location(x)
+
+      exp(
+        mu_c +
+          0.50 * rnorm(nrow(x))
+      )
+    }
+  } else if (
+    setting == "intersection_early_event_mixture_hd"
+  ) {
+
+    # ============================================================
+    # Shared high-dimensional event location with an early-event
+    # mixture whose probability differs across intersections.
+    #
+    # Early-event probabilities:
+    #
+    # X1 = 0, X2 <= 0: 0.03
+    # X1 = 0, X2 >  0: 0.07
+    # X1 = 1, X2 <= 0: 0.10
+    # X1 = 1, X2 >  0: 0.18
+    #
+    # Both components retain the same shared high-dimensional
+    # location. The early component is shifted downward.
+    # ============================================================
+
+    p <- 75
+
+    mu_t_fun <- function(x) {
+      shared_hd_event_location(x)
+    }
+
+    early_probability_fun <- function(x) {
+
+      x <- as.data.frame(x)
+
+      prob_early <- rep(
+        NA_real_,
+        nrow(x)
+      )
+
+      group_00 <- (
+        x$X1 == 0 &
+          x$X2 <= 0
+      )
+
+      group_01 <- (
+        x$X1 == 0 &
+          x$X2 > 0
+      )
+
+      group_10 <- (
+        x$X1 == 1 &
+          x$X2 <= 0
+      )
+
+      group_11 <- (
+        x$X1 == 1 &
+          x$X2 > 0
+      )
+
+      prob_early[group_00] <- 0.03
+      prob_early[group_01] <- 0.07
+      prob_early[group_10] <- 0.10
+      prob_early[group_11] <- 0.18
+
+      if (anyNA(prob_early)) {
+        stop(
+          paste0(
+            "Some observations were not assigned ",
+            "an early-event probability."
+          )
+        )
+      }
+
+      prob_early
+    }
+
+    gen_t <- function(x) {
+
+      n <- nrow(x)
+
+      mu_t <- mu_t_fun(x)
+
+      prob_early <- early_probability_fun(x)
+
+      early_component <- rbinom(
+        n = n,
+        size = 1,
+        prob = prob_early
+      )
+
+      u <- pmin(
+        pmax(
+          runif(n),
+          1e-12
+        ),
+        1 - 1e-12
+      )
+
+      eps_t <- log(
+        -log(u)
+      )
+
+      # The early component has both an earlier location and a
+      # slightly narrower distribution.
+      component_scale <- ifelse(
+        early_component == 1,
+        0.25,
+        0.35
+      )
+
+      early_shift <- 1.35
+
+      log_t <- (
+        mu_t -
+          early_shift * early_component +
+          component_scale * eps_t
+      )
+
+      exp(log_t)
+    }
+
+    gen_c <- function(x) {
+
+      mu_c <- mild_intersection_censoring_location(x)
+
+      exp(
+        mu_c +
+          0.50 * rnorm(nrow(x))
+      )
     }
   } else {
     stop(sprintf("Unknown setting: %s", setting))

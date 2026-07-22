@@ -13,7 +13,7 @@ module load r/4.5.0
 
 cd ~/scratch/CAMS/simulations
 
-SETTING_LIST="rare_intersection_shared_weibull,basis_intersection_shared_weibull,mixture_intersection_shared_weibull"
+SETTING_LIST="intersection_scale_shift_hd,intersection_early_event_mixture_hd"
 
 SC_METHODS="oracle"
 ONLY_CAMS=0

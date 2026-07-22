@@ -404,6 +404,40 @@ mu_c_oracle <- function(X, setting) {
       0.65 * group_1_positive -
       0.35 * group_0_positive +
       0.25 * X$X3
+  } else if (
+    setting %in% c(
+      "intersection_scale_shift_hd",
+      "intersection_early_event_mixture_hd"
+    )
+  ) {
+
+    required_names <- c(
+      "X1",
+      "X2",
+      "X3"
+    )
+
+    missing_names <- setdiff(
+      required_names,
+      colnames(X)
+    )
+
+    if (length(missing_names) > 0L) {
+      stop(
+        sprintf(
+          "Oracle censoring model is missing: %s",
+          paste(
+            missing_names,
+            collapse = ", "
+          )
+        )
+      )
+    }
+
+    mu_c <- 3.25 -
+      0.15 * X$X1 -
+      0.10 * as.numeric(X$X2 > 0) +
+      0.15 * X$X3
   } else {
     stop(sprintf("Unknown setting for oracle S_C: %s", setting))
   }

@@ -97,10 +97,9 @@ source("./fig.R")
 ########################################
 
 alpha <- 0.1    # target level 1-alpha
-n <- 3000
+n_train <- 2000
+n_calib <- 8000
 n_test <- 20000
-n_train <- n
-n_calib <- n
 xmin <- -2
 xmax <- 2
 bernoulli_prob <- 0.1
