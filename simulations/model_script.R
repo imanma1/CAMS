@@ -1304,6 +1304,129 @@ model_generating_fun <- function(n_train, n_calib, n_test,
           0.50 * rnorm(nrow(x))
       )
     }
+  } else if (
+    setting == "intersection_location_shift_ld"
+  ) {
+
+    # ============================================================
+    # Low-dimensional setting with a shared event model and
+    # intersection-specific location shifts.
+    #
+    # Dimension: p = 5
+    #
+    # The common event slopes are shared across all four groups,
+    # but the event location differs according to:
+    #
+    #   X1 = 0, X2 <= 0:  delta =  0.30
+    #   X1 = 0, X2 >  0:  delta = -0.20
+    #   X1 = 1, X2 <= 0:  delta =  0.55
+    #   X1 = 1, X2 >  0:  delta = -0.65
+    #
+    # Censoring is mild and does not depend directly on X1.
+    # ============================================================
+
+    p <- 5
+
+    intersection_shift_fun <- function(x) {
+
+      x <- as.data.frame(x)
+
+      delta_r <- rep(
+        NA_real_,
+        nrow(x)
+      )
+
+      group_00 <- (
+        x$X1 == 0 &
+          x$X2 <= 0
+      )
+
+      group_01 <- (
+        x$X1 == 0 &
+          x$X2 > 0
+      )
+
+      group_10 <- (
+        x$X1 == 1 &
+          x$X2 <= 0
+      )
+
+      group_11 <- (
+        x$X1 == 1 &
+          x$X2 > 0
+      )
+
+      delta_r[group_00] <- 0.30
+      delta_r[group_01] <- -0.20
+      delta_r[group_10] <- 0.55
+      delta_r[group_11] <- -0.65
+
+      if (anyNA(delta_r)) {
+        stop(
+          paste0(
+            "Some observations were not assigned ",
+            "an intersectional location shift."
+          )
+        )
+      }
+
+      delta_r
+    }
+
+    mu_t_fun <- function(x) {
+
+      x <- as.data.frame(x)
+
+      2.60 +
+        1.00 * x$X2 -
+        0.80 * x$X3 +
+        0.60 * x$X4 -
+        0.40 * x$X5 +
+        intersection_shift_fun(x)
+    }
+
+    gen_t <- function(x) {
+
+      x <- as.data.frame(x)
+      n <- nrow(x)
+
+      # Minimum extreme-value error corresponding to
+      # survreg(..., dist = "weibull").
+      u <- pmin(
+        pmax(
+          runif(n),
+          1e-12
+        ),
+        1 - 1e-12
+      )
+
+      eps_t <- log(
+        -log(u)
+      )
+
+      sigma_t <- 0.35
+
+      exp(
+        mu_t_fun(x) +
+          sigma_t * eps_t
+      )
+    }
+
+    gen_c <- function(x) {
+
+      x <- as.data.frame(x)
+
+      mu_c <- 3.40 +
+        0.15 * x$X3 -
+        0.10 * as.numeric(
+          x$X2 > 0
+        )
+
+      exp(
+        mu_c +
+          0.50 * rnorm(nrow(x))
+      )
+    }
   } else {
     stop(sprintf("Unknown setting: %s", setting))
   }

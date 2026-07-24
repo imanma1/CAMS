@@ -97,12 +97,12 @@ source("./fig.R")
 ########################################
 
 alpha <- 0.1    # target level 1-alpha
-n_train <- 2000
+n_train <- 500
 n_calib <- 8000
 n_test <- 20000
 xmin <- -2
 xmax <- 2
-bernoulli_prob <- 0.1
+bernoulli_prob <- 0.30
 
 # Detect cores just to print a helpful message (the actual multithreading happens inside the utils scripts)
 slurm_cores <- as.numeric(Sys.getenv("SLURM_CPUS_PER_TASK"))

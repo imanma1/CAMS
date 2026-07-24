@@ -13,7 +13,7 @@ module load r/4.5.0
 
 cd ~/scratch/CAMS/simulations
 
-SETTING_LIST="intersection_scale_shift_hd,intersection_early_event_mixture_hd"
+SETTING_LIST="intersection_location_shift_ld"
 
 SC_METHODS="oracle"
 ONLY_CAMS=0
