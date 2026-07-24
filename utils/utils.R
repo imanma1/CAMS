@@ -470,6 +470,37 @@ mu_c_oracle <- function(X, setting) {
       0.10 * as.numeric(
         X$X2 > 0
       )
+  } else if (
+    setting == "rare_intersection_scale_shift_ld"
+  ) {
+
+    required_names <- c(
+      "X1",
+      "X2",
+      "X3"
+    )
+
+    missing_names <- setdiff(
+      required_names,
+      colnames(X)
+    )
+
+    if (length(missing_names) > 0L) {
+      stop(
+        sprintf(
+          "Oracle censoring model is missing columns: %s",
+          paste(
+            missing_names,
+            collapse = ", "
+          )
+        )
+      )
+    }
+
+    mu_c <- (
+      3.30 +
+        0.10 * X$X3
+    )
   } else {
     stop(sprintf("Unknown setting for oracle S_C: %s", setting))
   }

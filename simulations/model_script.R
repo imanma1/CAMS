@@ -1427,6 +1427,134 @@ model_generating_fun <- function(n_train, n_calib, n_test,
           0.50 * rnorm(nrow(x))
       )
     }
+  } else if (
+    setting == "rare_intersection_scale_shift_ld"
+  ) {
+
+    # ============================================================
+    # Low-dimensional, rare-intersection scale-shift setting
+    #
+    # Intended configuration:
+    #   p = 5
+    #   bernoulli_prob = 0.10
+    #
+    # The event-location model is shared across all four groups.
+    # Only the Weibull scale varies across intersectional groups:
+    #
+    #   X1 = 0, X2 <= 0: sigma = 0.30
+    #   X1 = 0, X2 >  0: sigma = 0.45
+    #   X1 = 1, X2 <= 0: sigma = 0.55
+    #   X1 = 1, X2 >  0: sigma = 0.80
+    #
+    # Censoring is moderate and simple. The purpose is to test
+    # whether CAMS benefits from pooling the shared event-location
+    # structure when minority fitting groups are small.
+    # ============================================================
+
+    p <- 5
+
+    mu_t_fun <- function(x) {
+
+      x <- as.data.frame(x)
+
+      required_names <- paste0(
+        "X",
+        1:5
+      )
+
+      missing_names <- setdiff(
+        required_names,
+        colnames(x)
+      )
+
+      if (length(missing_names) > 0L) {
+        stop(
+          sprintf(
+            "Event model is missing columns: %s",
+            paste(
+              missing_names,
+              collapse = ", "
+            )
+          )
+        )
+      }
+
+      2.60 +
+        0.80 * x$X1 +
+        0.80 * x$X2 -
+        0.60 * x$X3 +
+        0.40 * x$X4 -
+        0.30 * x$X5
+    }
+
+    sigma_t_fun <- function(x) {
+
+      x <- as.data.frame(x)
+
+      sigma_t <- rep(
+        NA_real_,
+        nrow(x)
+      )
+
+      group_00 <- (
+        x$X1 == 0 &
+          x$X2 <= 0
+      )
+
+      group_01 <- (
+        x$X1 == 0 &
+          x$X2 > 0
+      )
+
+      group_10 <- (
+        x$X1 == 1 &
+          x$X2 <= 0
+      )
+
+      group_11 <- (
+        x$X1 == 1 &
+          x$X2 > 0
+      )
+
+      sigma_t[group_00] <- 0.30
+      sigma_t[group_01] <- 0.45
+      sigma_t[group_10] <- 0.55
+      sigma_t[group_11] <- 0.80
+
+      if (anyNA(sigma_t)) {
+        stop(
+          paste0(
+            "Some observations were not assigned ",
+            "an intersection-specific event scale."
+          )
+        )
+      }
+
+      sigma_t
+    }
+
+    gen_t <- function(x) {
+
+      draw_min_extreme_value_time(
+        mu_t = mu_t_fun(x),
+        sigma_t = sigma_t_fun(x)
+      )
+    }
+
+    gen_c <- function(x) {
+
+      x <- as.data.frame(x)
+
+      mu_c <- (
+        3.30 +
+          0.10 * x$X3
+      )
+
+      exp(
+        mu_c +
+          0.50 * rnorm(nrow(x))
+      )
+    }
   } else {
     stop(sprintf("Unknown setting: %s", setting))
   }
