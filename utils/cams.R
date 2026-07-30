@@ -49,6 +49,7 @@ make_oracle_event_model <- function(setting,
                                     homoscedastic_event = FALSE) {
 
   supported_settings <- c(
+    "cov_cens_dr",
     "cams_vs_vanilla_lower_tail_hd_mild",
     "cams_vs_vanilla_lower_tail_hd_main",
     "cams_vs_vanilla_lower_tail_hd_strong"
@@ -79,50 +80,114 @@ oracle_event_survival_prob <- function(mdl,
 
   X <- as.data.frame(newdata)
 
-  required_names <- paste0("X", 1:75)
+  # ==================================================
+  # Define the true event model for each setting
+  # ==================================================
 
-  missing_names <- setdiff(
-    required_names,
-    colnames(X)
-  )
+  if (mdl$setting == "cov_cens_dr") {
 
-  if (length(missing_names) > 0L) {
+    # --------------------------------------------------
+    # Simple correctly specified Weibull-AFT event model
+    #
+    # log(T) = mu_t(X) + 0.5 * epsilon
+    # epsilon = log(-log(U))
+    # --------------------------------------------------
+
+    required_names <- c("X1", "X2")
+
+    missing_names <- setdiff(
+      required_names,
+      colnames(X)
+    )
+
+    if (length(missing_names) > 0L) {
+      stop(
+        sprintf(
+          "Oracle event model is missing columns: %s",
+          paste(missing_names, collapse = ", ")
+        )
+      )
+    }
+
+    mu_t <- 2 +
+      0.5 * X$X2 -
+      0.5 * X$X1
+
+    sigma_t <- rep(
+      0.5,
+      nrow(X)
+    )
+
+  } else if (
+    mdl$setting %in% c(
+      "cams_vs_vanilla_lower_tail_hd_mild",
+      "cams_vs_vanilla_lower_tail_hd_main",
+      "cams_vs_vanilla_lower_tail_hd_strong"
+    )
+  ) {
+
+    # --------------------------------------------------
+    # Existing lower-tail HD event model
+    # --------------------------------------------------
+
+    required_names <- paste0("X", 1:75)
+
+    missing_names <- setdiff(
+      required_names,
+      colnames(X)
+    )
+
+    if (length(missing_names) > 0L) {
+      stop(
+        sprintf(
+          "Oracle event model is missing columns: %s",
+          paste(missing_names, collapse = ", ")
+        )
+      )
+    }
+
+    # Same dense signal used in the three lower-tail HD settings
+    beta_dense <- 0.03 * rep(
+      c(1, -1),
+      length.out = 75 - 4
+    )
+
+    dense_score <- as.numeric(
+      as.matrix(
+        X[, paste0("X", 5:75), drop = FALSE]
+      ) %*% beta_dense
+    )
+
+    mu_t <- 2.8 +
+      0.40 * X$X1 +
+      0.60 * X$X2 -
+      0.50 * X$X3 +
+      0.30 * X$X4 +
+      dense_score
+
+    if (isTRUE(mdl$homoscedastic_event)) {
+      sigma_t <- rep(
+        0.35,
+        nrow(X)
+      )
+    } else {
+      sigma_t <- 0.28 +
+        0.17 * X$X1
+    }
+
+  } else {
+
     stop(
       sprintf(
-        "Oracle event model is missing columns: %s",
-        paste(missing_names, collapse = ", ")
+        "Oracle event survival is not implemented for setting: %s",
+        mdl$setting
       )
     )
   }
 
-  # Same dense signal used in the three lower-tail HD settings
-  beta_dense <- 0.03 * rep(
-    c(1, -1),
-    length.out = 75 - 4
-  )
-
-  dense_score <- as.numeric(
-    as.matrix(
-      X[, paste0("X", 5:75), drop = FALSE]
-    ) %*% beta_dense
-  )
-
-  mu_t <- 2.8 +
-    0.40 * X$X1 +
-    0.60 * X$X2 -
-    0.50 * X$X3 +
-    0.30 * X$X4 +
-    dense_score
-
-  if (isTRUE(mdl$homoscedastic_event)) {
-    sigma_t <- rep(
-      0.35,
-      nrow(X)
-    )
-  } else {
-    sigma_t <- 0.28 +
-      0.17 * X$X1
-  }
+  # ==================================================
+  # Compute true conditional event survival
+  # ==================================================
 
   n <- nrow(X)
 
@@ -184,6 +249,7 @@ oracle_event_survival_prob <- function(mdl,
     # --------------------------------------------------
     # Scalar or rowwise vector of times
     # --------------------------------------------------
+
     if (length(t) == 1L) {
       t <- rep(
         t,

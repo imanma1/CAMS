@@ -259,6 +259,9 @@ mu_c_oracle <- function(X, setting) {
   } else if (setting == "cov_cens") {
     mu_c <- 2.5 + 1.2 * X$X2
 
+  } else if (setting == "cov_cens_dr") {
+    mu_c <- 2.5 + 1.2 * X$X2
+
   } else if (setting == "prot_cens") {
     mu_c <- 3.0 - 1.5 * X$X1
 

@@ -1555,6 +1555,19 @@ model_generating_fun <- function(n_train, n_calib, n_test,
           0.50 * rnorm(nrow(x))
       )
     }
+  } else if (setting == "cov_cens_dr") {
+
+    p <- 2
+
+    gen_t <- function(x) {
+      mu_t <- 2 + 0.5 * x[,2] - 0.5 * x[,1]
+      sigma_t <- 0.5
+      draw_min_extreme_value_time(mu_t, sigma_t)
+    }
+
+    gen_c <- function(x) {
+      exp(2.5 + 1.2 * x[,2] + 0.5 * rnorm(nrow(x)))
+    }
   } else {
     stop(sprintf("Unknown setting: %s", setting))
   }

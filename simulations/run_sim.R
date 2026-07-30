@@ -102,7 +102,14 @@ n_calib <- 8000
 n_test <- 20000
 xmin <- -2
 xmax <- 2
-bernoulli_prob <- 0.10
+bernoulli_prob <- 0.30
+
+gamma_list <- c(
+  0.5,
+  1,
+  2,
+  3
+)
 
 # Detect cores just to print a helpful message (the actual multithreading happens inside the utils scripts)
 slurm_cores <- as.numeric(Sys.getenv("SLURM_CPUS_PER_TASK"))
@@ -164,6 +171,24 @@ for (i in seq_len(num_runs)) {
               run_folder0,
               paste0("gamma_", gamma)
             )
+            run_folder_final <- file.path(
+              run_folder1,
+              event_scale_label,
+              as.character(current_seed)
+            )
+            if (!dir.exists(run_folder_final)) {
+              dir.create(run_folder_final, showWarnings = FALSE, recursive = TRUE)
+            }
+            cat(sprintf(
+              "%s for run %d (%s/%s): %.2f seconds.\n",
+              setting, i, sc_method, augmentation_method,
+              proc.time()[3] - start_time
+            ))
+            save_dir <- file.path(
+              run_folder_final,
+              sprintf("%d. %s_seed_%d.csv", j, setting, current_seed)
+            )
+            write.csv(simures, save_dir, row.names = FALSE)
           }
         } else {
           cat(sprintf(
@@ -189,25 +214,25 @@ for (i in seq_len(num_runs)) {
             use_intersectional_R = use_intersectional_R
           )
           run_folder1 <- run_folder0
+          run_folder_final <- file.path(
+            run_folder1,
+            event_scale_label,
+            as.character(current_seed)
+          )
+          if (!dir.exists(run_folder_final)) {
+            dir.create(run_folder_final, showWarnings = FALSE, recursive = TRUE)
+          }
+          cat(sprintf(
+            "%s for run %d (%s/%s): %.2f seconds.\n",
+            setting, i, sc_method, augmentation_method,
+            proc.time()[3] - start_time
+          ))
+          save_dir <- file.path(
+            run_folder_final,
+            sprintf("%d. %s_seed_%d.csv", j, setting, current_seed)
+          )
+          write.csv(simures, save_dir, row.names = FALSE)
         }
-        run_folder_final <- file.path(
-          run_folder1,
-          event_scale_label,
-          as.character(current_seed)
-        )
-        if (!dir.exists(run_folder_final)) {
-          dir.create(run_folder_final, showWarnings = FALSE, recursive = TRUE)
-        }
-        cat(sprintf(
-          "%s for run %d (%s/%s): %.2f seconds.\n",
-          setting, i, sc_method, augmentation_method,
-          proc.time()[3] - start_time
-        ))
-        save_dir <- file.path(
-          run_folder_final,
-          sprintf("%d. %s_seed_%d.csv", j, setting, current_seed)
-        )
-        write.csv(simures, save_dir, row.names = FALSE)
       }
     }
   }
