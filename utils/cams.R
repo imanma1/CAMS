@@ -50,6 +50,7 @@ make_oracle_event_model <- function(setting,
 
   supported_settings <- c(
     "cov_cens_dr",
+    "cov_cens_dr_tail",
     "cams_vs_vanilla_lower_tail_hd_mild",
     "cams_vs_vanilla_lower_tail_hd_main",
     "cams_vs_vanilla_lower_tail_hd_strong"
@@ -84,16 +85,24 @@ oracle_event_survival_prob <- function(mdl,
   # Define the true event model for each setting
   # ==================================================
 
-  if (mdl$setting == "cov_cens_dr") {
+  if (
+    mdl$setting %in% c(
+      "cov_cens_dr",
+      "cov_cens_dr_tail"
+    )
+  ) {
 
     # --------------------------------------------------
-    # Simple correctly specified Weibull-AFT event model
+    # Correct Weibull-AFT event model
     #
     # log(T) = mu_t(X) + 0.5 * epsilon
     # epsilon = log(-log(U))
     # --------------------------------------------------
 
-    required_names <- c("X1", "X2")
+    required_names <- c(
+      "X1",
+      "X2"
+    )
 
     missing_names <- setdiff(
       required_names,
@@ -104,7 +113,10 @@ oracle_event_survival_prob <- function(mdl,
       stop(
         sprintf(
           "Oracle event model is missing columns: %s",
-          paste(missing_names, collapse = ", ")
+          paste(
+            missing_names,
+            collapse = ", "
+          )
         )
       )
     }

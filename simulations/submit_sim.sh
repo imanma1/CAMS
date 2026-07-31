@@ -13,12 +13,12 @@ module load r/4.5.0
 
 cd ~/scratch/CAMS/simulations
 
-SETTING_LIST="cov_cens_dr"
+SETTING_LIST="cov_cens_dr_tail"
 
-SC_METHODS="power_oracle,aft_lognormal,rsf,km,km_x1"
+SC_METHODS="power_oracle"
 ONLY_CAMS=0
 AUGMENTATION_METHODS="oracle_event"
-HOMOSCEDASTIC_EVENT=0
+HOMOSCEDASTIC_EVENT=1
 SC_NTREE=1000
 NUM_RUNS=10
 USE_INTERSECTIONAL_R=1

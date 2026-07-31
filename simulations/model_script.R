@@ -1555,6 +1555,70 @@ model_generating_fun <- function(n_train, n_calib, n_test,
           0.50 * rnorm(nrow(x))
       )
     }
+  }  else if (setting == "cov_cens_dr_tail") {
+
+    # ============================================================
+    # Controlled double-robustness setting
+    #
+    # Event model:
+    #   log(T) = mu_t(X) + 0.5 * epsilon_EV
+    #   mu_t(X) = 2 + 0.5 X2 - 0.5 X1
+    #
+    # Censoring model:
+    #   Two-component lognormal mixture centered relative to mu_t.
+    #
+    # The event model is deliberately simple and homogeneous.
+    # Censoring is placed near the target lower tail so that
+    # misspecification of G(t | X) has a meaningful effect.
+    # ============================================================
+
+    p <- 2
+
+    mu_t_fun <- function(x) {
+      2 +
+        0.5 * x[, 2] -
+        0.5 * x[, 1]
+    }
+
+    gen_t <- function(x) {
+
+      mu_t <- mu_t_fun(x)
+
+      draw_min_extreme_value_time(
+        mu_t = mu_t,
+        sigma_t = 0.5
+      )
+    }
+
+    gen_c <- function(x) {
+
+      mu_t <- mu_t_fun(x)
+
+      # Constant across covariates/groups:
+      # the censoring mechanism itself does not privilege
+      # any validity group.
+      prob_early <- rep(
+        0.20,
+        nrow(x)
+      )
+
+      early <- rbinom(
+        nrow(x),
+        size = 1,
+        prob = prob_early
+      )
+
+      log_c <- ifelse(
+        early == 1,
+        mu_t - 1.30 +
+          0.25 * rnorm(nrow(x)),
+        mu_t + 1.20 +
+          0.40 * rnorm(nrow(x))
+      )
+
+      exp(log_c)
+    }
+
   } else if (setting == "cov_cens_dr") {
 
     p <- 2

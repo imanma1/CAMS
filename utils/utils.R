@@ -735,6 +735,61 @@ oracle_sc_prob <- function(oracle_mdl, data, t) {
     )
   }
 
+  # ==========================================================
+  # Controlled lower-tail censoring setting
+  # ==========================================================
+
+  if (setting == "cov_cens_dr_tail") {
+
+    required_names <- c(
+      "X1",
+      "X2"
+    )
+
+    missing_names <- setdiff(
+      required_names,
+      colnames(X)
+    )
+
+    if (length(missing_names) > 0L) {
+      stop(
+        sprintf(
+          paste0(
+            "Oracle censoring model for cov_cens_dr_tail ",
+            "is missing columns: %s"
+          ),
+          paste(
+            missing_names,
+            collapse = ", "
+          )
+        )
+      )
+    }
+
+    # Same event-location function used by the DGP.
+    mu_t <- 2 +
+      0.5 * X$X2 -
+      0.5 * X$X1
+
+    # Constant mixture probability:
+    # censoring severity does not differ by protected group.
+    prob_early <- rep(
+      0.20,
+      nrow(X)
+    )
+
+    return(
+      two_component_lognormal_survival(
+        t = t,
+        mixture_probability = prob_early,
+        first_mean = mu_t - 1.30,
+        first_sd = 0.25,
+        second_mean = mu_t + 1.20,
+        second_sd = 0.40
+      )
+    )
+  }
+
   mixture_settings <- c(
     "cams_vs_vanilla_lower_tail_hd_mild",
     "cams_vs_vanilla_lower_tail_hd_main",
