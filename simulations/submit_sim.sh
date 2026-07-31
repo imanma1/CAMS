@@ -2,7 +2,7 @@
 
 #SBATCH --account=def-zjunxi_cpu
 #SBATCH --job-name=cams_intersection_screen
-#SBATCH --time=5:02:00
+#SBATCH --time=3:02:00
 #SBATCH --cpus-per-task=48
 #SBATCH --mem=192G
 #SBATCH --array=1-100:10
@@ -13,12 +13,12 @@ module load r/4.5.0
 
 cd ~/scratch/CAMS/simulations
 
-SETTING_LIST="cov_cens_dr_tail"
+SETTING_LIST="cov_cens_dr_tail_hetero"
 
 SC_METHODS="power_oracle"
 ONLY_CAMS=0
 AUGMENTATION_METHODS="oracle_event"
-HOMOSCEDASTIC_EVENT=1
+HOMOSCEDASTIC_EVENT=0
 SC_NTREE=1000
 NUM_RUNS=10
 USE_INTERSECTIONAL_R=1

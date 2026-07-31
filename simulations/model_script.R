@@ -1555,7 +1555,109 @@ model_generating_fun <- function(n_train, n_calib, n_test,
           0.50 * rnorm(nrow(x))
       )
     }
-  }  else if (setting == "cov_cens_dr_tail") {
+  } else if (setting == "cov_cens_dr_tail_hetero") {
+
+    # ============================================================
+    # Controlled DR setting with residual event-risk heterogeneity
+    #
+    # Protected validity groups:
+    #   defined only by X1 and sign(X2)
+    #
+    # Event model:
+    #   log(T) = mu_t(X) + sigma_t(X3) * epsilon_EV
+    #
+    #   mu_t(X) = 2 + 0.5 X2 - 0.5 X1
+    #
+    #   sigma_t(X3) =
+    #       0.35, X3 <= 0
+    #       0.60, X3 > 0
+    #
+    # Censoring:
+    #   Two-component lognormal mixture.
+    #   X3 > 0 observations are more likely to receive
+    #   lower-tail censoring.
+    #
+    # This creates correlation between:
+    #   - residual event-risk heterogeneity, and
+    #   - censoring heterogeneity,
+    #
+    # without making the protected groups themselves special.
+    # ============================================================
+
+    p <- 3
+
+    mu_t_fun <- function(x) {
+
+      x <- as.data.frame(x)
+
+      2 +
+        0.5 * x$X2 -
+        0.5 * x$X1
+    }
+
+    sigma_t_fun <- function(x) {
+
+      x <- as.data.frame(x)
+
+      ifelse(
+        x$X3 > 0,
+        0.60,
+        0.35
+      )
+    }
+
+    gen_t <- function(x) {
+
+      draw_min_extreme_value_time(
+        mu_t = mu_t_fun(x),
+        sigma_t = sigma_t_fun(x)
+      )
+    }
+
+    gen_c <- function(x) {
+
+      x <- as.data.frame(x)
+
+      n <- nrow(x)
+
+      mu_t <- mu_t_fun(x)
+
+      # More early censoring precisely in the region
+      # with the larger event-time scale.
+      prob_early <- ifelse(
+        x$X3 > 0,
+        0.40,
+        0.10
+      )
+
+      early <- rbinom(
+        n = n,
+        size = 1,
+        prob = prob_early
+      )
+
+      mu_c <- ifelse(
+        early == 1,
+        mu_t - 1.30,
+        mu_t + 1.20
+      )
+
+      sigma_c <- ifelse(
+        early == 1,
+        0.25,
+        0.40
+      )
+
+      exp(
+        rnorm(
+          n = n,
+          mean = mu_c,
+          sd = sigma_c
+        )
+      )
+    }
+
+  } else if (setting == "cov_cens_dr_tail") {
 
     # ============================================================
     # Controlled double-robustness setting

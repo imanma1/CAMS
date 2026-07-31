@@ -51,6 +51,7 @@ make_oracle_event_model <- function(setting,
   supported_settings <- c(
     "cov_cens_dr",
     "cov_cens_dr_tail",
+    "cov_cens_dr_tail_hetero",
     "cams_vs_vanilla_lower_tail_hd_mild",
     "cams_vs_vanilla_lower_tail_hd_main",
     "cams_vs_vanilla_lower_tail_hd_strong"
@@ -93,10 +94,7 @@ oracle_event_survival_prob <- function(mdl,
   ) {
 
     # --------------------------------------------------
-    # Correct Weibull-AFT event model
-    #
-    # log(T) = mu_t(X) + 0.5 * epsilon
-    # epsilon = log(-log(U))
+    # Simple constant-scale event models
     # --------------------------------------------------
 
     required_names <- c(
@@ -129,6 +127,52 @@ oracle_event_survival_prob <- function(mdl,
       0.5,
       nrow(X)
     )
+
+
+  } else if (
+    mdl$setting == "cov_cens_dr_tail_hetero"
+  ) {
+
+    # --------------------------------------------------
+    # Exact oracle event model for the heterogeneous
+    # scale DR experiment.
+    #
+    # log(T) = mu_t(X) + sigma_t(X3) * epsilon_EV
+    # --------------------------------------------------
+
+    required_names <- c(
+      "X1",
+      "X2",
+      "X3"
+    )
+
+    missing_names <- setdiff(
+      required_names,
+      colnames(X)
+    )
+
+    if (length(missing_names) > 0L) {
+      stop(
+        sprintf(
+          "Oracle event model is missing columns: %s",
+          paste(
+            missing_names,
+            collapse = ", "
+          )
+        )
+      )
+    }
+
+    mu_t <- 2 +
+      0.5 * X$X2 -
+      0.5 * X$X1
+
+    sigma_t <- ifelse(
+      X$X3 > 0,
+      0.60,
+      0.35
+    )
+
 
   } else if (
     mdl$setting %in% c(
