@@ -138,7 +138,8 @@ idx_test_1 <- data_test$X1 == 1
   # This function trains all 6 methods and returns their lower bounds and times
   run_pipeline <- function(sub_fit, sub_calib, sub_test,
                            xnames_to_use, alpha, seed,
-                           mod, non_cams_mode = "joint") {
+                           mod, non_cams_mode = "joint",
+                           debug_label = non_cams_mode) {
     # Utility function to safely extract quantiles from a coxph object
     p_sub <- length(xnames_to_use)
     len_test <- nrow(sub_test)
@@ -205,13 +206,117 @@ idx_test_1 <- data_test$X1 == 1
         use_oracle_sc = use_oracle_sc
       )
       raw_time_qc0 <- proc.time()[3] - start_time
-      cat(sprintf("cfsurv (qc0) trained in %.2f seconds.\n", raw_time_qc0))
+      cat(sprintf(
+        "cfsurv (qc0) trained in %.2f seconds.\n",
+        raw_time_qc0
+      ))
+
       time_qc0 <- raw_time_qc0
       times <- c(times, time_qc0)
-      if (length(res0$res) == 0) {
-        cat("  -> [WARNING] cfsurv returned empty predictions. Filling with NAs.\n")
-        output[["DFT-fixed"]] <- rep(NA, nrow(output))
+
+      if (isTRUE(getOption("debug_dft_fixed", FALSE))) {
+
+        cat("\n")
+        cat("============================================\n")
+        cat("DFT-FIXED DEBUG\n")
+        cat("Pipeline:", non_cams_mode, "\n")
+        cat("Group:", debug_label, "\n")
+        cat("fit n:", nrow(sub_fit), "\n")
+        cat("calib n:", nrow(sub_calib), "\n")
+        cat("test n:", nrow(sub_test), "\n")
+
+        if ("X1" %in% names(sub_fit)) {
+          cat(
+            "X1 values:",
+            paste(sort(unique(sub_fit$X1)), collapse = ", "),
+            "\n"
+          )
+        }
+
+        if ("X2" %in% names(sub_fit)) {
+          cat(
+            "X2 fit range:",
+            paste(range(sub_fit$X2, na.rm = TRUE), collapse = " to "),
+            "\n"
+          )
+        }
+
+        if ("C" %in% names(sub_fit)) {
+          cat(
+            "C fit range:",
+            paste(range(sub_fit$C, na.rm = TRUE), collapse = " to "),
+            "\n"
+          )
+          cat(
+            "Number of unique C values:",
+            length(unique(sub_fit$C)),
+            "\n"
+          )
+        }
+
+        if ("event" %in% names(sub_fit)) {
+          cat("Fit event table:\n")
+          print(table(sub_fit$event, useNA = "ifany"))
+        }
+
+        if ("event" %in% names(sub_calib)) {
+          cat("Calibration event table:\n")
+          print(table(sub_calib$event, useNA = "ifany"))
+        }
+
+        cat("Returned cutoff c:\n")
+        print(res0$c)
+
+        cat(
+          "selection_failed:",
+          isTRUE(res0$selection_failed),
+          "\n"
+        )
+
+        cat("Prediction diagnostics:\n")
+        cat("  length =", length(res0$res), "\n")
+        cat("  NA =", sum(is.na(res0$res)), "\n")
+        cat("  NaN =", sum(is.nan(res0$res)), "\n")
+        cat("  Inf =", sum(is.infinite(res0$res)), "\n")
+        cat("  finite =", sum(is.finite(res0$res)), "\n")
+
+        if (!is.null(res0$selection_result)) {
+          cat("\nselection_result structure:\n")
+          str(
+            res0$selection_result,
+            max.level = 2,
+            vec.len = 20,
+            give.attr = FALSE
+          )
+        }
+
+        cat("============================================\n\n")
+      }
+
+      if (
+        isTRUE(res0$selection_failed) ||
+        length(res0$res) == 0L ||
+        all(is.na(res0$res))
+      ) {
+
+        warning(
+          sprintf(
+            paste0(
+              "DFT-fixed failed for %s (%s). ",
+              "Returning NA predictions."
+            ),
+            debug_label,
+            non_cams_mode
+          )
+        )
+
+        output[["DFT-fixed"]] <- rep(
+          NA_real_,
+          nrow(output)
+        )
+
       } else {
+
         output[["DFT-fixed"]] <- res0$res
       }
 
@@ -430,10 +535,13 @@ idx_test_1 <- data_test$X1 == 1
         return(NA_real_)
       }
 
-      mean(
-        x[index],
-        na.rm = TRUE
-      )
+      values <- x[index]
+
+      if (anyNA(values)) {
+        return(NA_real_)
+      }
+
+      mean(values)
     }
 
     weighted_finite_mean <- function(
@@ -524,18 +632,28 @@ idx_test_1 <- data_test$X1 == 1
       output_df,
       2,
       function(x) {
-        mean(
-          T_test >= x,
-          na.rm = TRUE
-        )
+
+        coverage_values <- T_test >= x
+
+        if (anyNA(coverage_values)) {
+          return(NA_real_)
+        }
+
+        mean(coverage_values)
       }
     )
 
     simulen <- apply(
       output_df,
       2,
-      mean,
-      na.rm = TRUE
+      function(x) {
+
+        if (anyNA(x)) {
+          return(NA_real_)
+        }
+
+        mean(x)
+      }
     )
 
     group_coverage <- list()
@@ -572,6 +690,10 @@ idx_test_1 <- data_test$X1 == 1
     metrics <- data.frame(
       "method" = method_names,
       "setting" = setting,
+      "n_train" = n_train,
+      "n_calib" = n_calib,
+      "n_test" = n_test,
+      "bernoulli_prob" = bernoulli_prob,
       "censoring model" = sc_method,
       "augmentation model" = augmentation_method,
       "event-time scale" = if (
@@ -859,8 +981,17 @@ idx_test_1 <- data_test$X1 == 1
   ## APPROACH 1: Joint Modeling
   ########################################
   cat("========== Executing Approach 1: Joint Modeling ==========\n")
-  res_joint <- run_pipeline(data_fit, data_calib, data_test,
-                            xnames, alpha, seed, mod, "joint")
+  res_joint <- run_pipeline(
+    data_fit,
+    data_calib,
+    data_test,
+    xnames,
+    alpha,
+    seed,
+    mod,
+    "joint",
+    debug_label = "JOINT"
+  )
 
   ########################################
   ## APPROACH 2: Subgroup Modeling
@@ -934,7 +1065,8 @@ idx_test_1 <- data_test$X1 == 1
         alpha = alpha,
         seed = seed,
         mod = mod,
-        non_cams_mode = "subgroup"
+        non_cams_mode = "subgroup",
+        debug_label = r
       )
 
       subgroup_results[[r]] <- res_r
@@ -1013,71 +1145,6 @@ idx_test_1 <- data_test$X1 == 1
     homoscedastic_event = homoscedastic_event,
     use_intersectional_R = use_intersectional_R
   )
-
-  # local_cams <- data.frame(check.names = FALSE)
-  # for(audit_fraction in c(0.1, 0.2, 0.3, 0.4)) {
-  #   calib_split <- local_stratified_calibration_split(
-  #     data_calib = data_calib,
-  #     audit_fraction = audit_fraction,
-  #     split_seed = seed,
-  #     group_name = "X1"
-  #   )
-  #   data_audit <- calib_split$audit
-  #   data_final_calib <- calib_split$final_calibration
-
-  #   start_time_local_cams <- proc.time()[3]
-
-  #   local_cams_res <- cams_local_ipcw(
-  #     x = data_test[, xnames, drop = FALSE],
-  #     p = p,
-  #     len_x = nrow(data_test),
-  #     xnames = xnames,
-  #     data_fit = data_fit,
-  #     data_calib = data_calib,
-  #     mdl0 = mdl0,
-  #     alpha = alpha,
-  #     data_audit = data_audit,
-  #     data_local_calib = data_final_calib,
-
-  #     calibration_split_seed = seed,
-
-  #     mapping_log_dir = file.path(
-  #       paste0("../local_mapping", audit_fraction),
-  #       paste0("setting_", setting),
-  #       paste0("seed_", seed)
-  #     )
-  #   )
-
-  # cams_res0.2 <- cams(
-  #   x = data_test[, xnames, drop = FALSE],
-  #   p = p,
-  #   len_x = nrow(data_test),
-  #   xnames = xnames,
-  #   data_fit = data_fit,
-  #   data_calib = data_final_calib0.2,
-  #   mdl0 = res_joint$mdl0,
-  #   alpha = alpha,
-  #   use_oracle_sc = use_oracle_sc,
-  #   augmentation_method = augmentation_method,
-  #   setting = setting,
-  #   homoscedastic_event = homoscedastic_event
-  # )
-
-  #   # df_cams0.2 <- compute_metrics(
-  #   #   cams_res0.2$output,
-  #   #   times_vec = time_cams,
-  #   #   suffix_label = "(20%)",
-  #   #   calibration_diagnostics = cams_res0.2$diagnostics
-  #   # )
-
-  #   local_df_cams <- compute_metrics(
-  #     local_cams_res$output,
-  #     times_vec = proc.time()[3] - start_time_local_cams + time_mdl0,
-  #     suffix_label = sprintf("(%d%%)", audit_fraction * 100),
-  #   )
-
-  #   local_cams <- rbind(local_cams, local_df_cams)
-  # }
 
   time_cams <- proc.time()[3] - start_time_cams + time_mdl0
   cat(sprintf("CAMS trained in %.2f seconds.\n", time_cams))

@@ -78,6 +78,110 @@ cfsurv <- function(x, p, len_x, xnames,
       use_oracle_sc = use_oracle_sc
     )
 
+    if (isTRUE(getOption("debug_dft_fixed", FALSE))) {
+
+      cat("\n========== cfsurv cutoff-selection debug ==========\n")
+
+      cat("fit n:", nrow(data_fit), "\n")
+      cat("calib n:", nrow(data_calib), "\n")
+      cat("test n:", len_x, "\n")
+
+      cat(
+        "xnames:",
+        paste(xnames, collapse = ", "),
+        "\n"
+      )
+
+      if ("X1" %in% names(data_fit)) {
+        cat(
+          "X1 values:",
+          paste(sort(unique(data_fit$X1)), collapse = ", "),
+          "\n"
+        )
+      }
+
+      if ("X2" %in% names(data_fit)) {
+        cat(
+          "X2 range:",
+          paste(
+            range(data_fit$X2, na.rm = TRUE),
+            collapse = " to "
+          ),
+          "\n"
+        )
+      }
+
+      cat(
+        "C range:",
+        paste(
+          range(data_fit$C, na.rm = TRUE),
+          collapse = " to "
+        ),
+        "\n"
+      )
+
+      cat(
+        "c_list range:",
+        paste(
+          range(c_list, na.rm = TRUE),
+          collapse = " to "
+        ),
+        "\n"
+      )
+
+      cat("c_list length:", length(c_list), "\n")
+      cat(
+        "unique c_list values:",
+        length(unique(c_list)),
+        "\n"
+      )
+
+      if ("event" %in% names(data_fit)) {
+        cat("Fit event counts:\n")
+        print(
+          table(
+            data_fit$event,
+            useNA = "ifany"
+          )
+        )
+      }
+
+      if ("event" %in% names(data_calib)) {
+        cat("Calibration event counts:\n")
+        print(
+          table(
+            data_calib$event,
+            useNA = "ifany"
+          )
+        )
+      }
+
+      cat(
+        "selection_res names:",
+        paste(names(selection_res), collapse = ", "),
+        "\n"
+      )
+
+      cat("c_opt:\n")
+      print(selection_res$c_opt)
+
+      if ("selection_failed" %in% names(selection_res)) {
+        cat("selection_failed:\n")
+        print(selection_res$selection_failed)
+      }
+
+      cat("Full selection_res structure:\n")
+
+      str(
+        selection_res,
+        max.level = 2,
+        vec.len = 20,
+        give.attr = FALSE
+      )
+
+      cat("===================================================\n\n")
+    }
+
     c <- selection_res$c_opt
 
     if (

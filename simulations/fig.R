@@ -500,23 +500,143 @@ make_plots <- function(
     cat("  -> Detected methods in this order:\n")
     print(method_levels)
 
-    # Report means and across-seed standard deviations for every numeric metric.
-    numeric_cols <- names(all_data)[vapply(all_data, is.numeric, logical(1))]
-    summary_rows <- lapply(method_levels, function(method_name) {
-      method_data <- all_data[all_data$method == method_name, , drop = FALSE]
-      row <- data.frame(
-        method = method_name,
-        `number of seeds` = length(unique(method_data$source_seed)),
-        check.names = FALSE
+    # ---------------------------------------------------------
+    # Report simulation means while explicitly tracking failures.
+    #
+    # A method-run is considered complete only if both its
+    # marginal coverage and overall lower-bound mean are finite.
+    #
+    # This prevents numerical/selection failures from being
+    # silently hidden by na.rm = TRUE.
+    # ---------------------------------------------------------
+
+    numeric_cols <- names(all_data)[
+      vapply(
+        all_data,
+        is.numeric,
+        logical(1)
       )
-      for (metric_name in numeric_cols) {
-        values <- method_data[[metric_name]]
-        row[[paste0(metric_name, " mean")]] <- mean(values, na.rm = TRUE)
-        row[[paste0(metric_name, " sd across seeds")]] <- stats::sd(values, na.rm = TRUE)
+    ]
+
+    summary_rows <- lapply(
+      method_levels,
+      function(method_name) {
+
+        method_data <- all_data[
+          all_data$method == method_name,
+          ,
+          drop = FALSE
+        ]
+
+        complete_run <- (
+          is.finite(
+            method_data[["Marginal coverage"]]
+          ) &
+          is.finite(
+            method_data[["lower bound values mean"]]
+          )
+        )
+
+        available_seeds <- unique(
+          method_data$source_seed
+        )
+
+        complete_seeds <- unique(
+          method_data$source_seed[
+            complete_run
+          ]
+        )
+
+        failed_seeds <- unique(
+          method_data$source_seed[
+            !complete_run
+          ]
+        )
+
+        n_available <- length(
+          available_seeds
+        )
+
+        n_complete <- length(
+          complete_seeds
+        )
+
+        n_failed <- length(
+          failed_seeds
+        )
+
+        failure_rate <- if (
+          n_available > 0L
+        ) {
+          n_failed / n_available
+        } else {
+          NA_real_
+        }
+
+        row <- data.frame(
+          method = method_name,
+          `number of available seeds` =
+            n_available,
+          `number of complete seeds` =
+            n_complete,
+          `number of failed seeds` =
+            n_failed,
+          `failure rate` =
+            failure_rate,
+          `failed seed IDs` =
+            if (n_failed > 0L) {
+              paste(
+                failed_seeds,
+                collapse = ","
+              )
+            } else {
+              ""
+            },
+          check.names = FALSE,
+          stringsAsFactors = FALSE
+        )
+
+        for (metric_name in numeric_cols) {
+
+          values <- method_data[[metric_name]]
+
+          complete_values <- values[complete_run]
+
+          finite_values <- complete_values[
+            is.finite(complete_values)
+          ]
+
+          row[[
+            paste0(
+              metric_name,
+              " mean among complete seeds"
+            )
+          ]] <- if (length(finite_values) > 0L) {
+            mean(finite_values)
+          } else {
+            NA_real_
+          }
+
+          row[[
+            paste0(
+              metric_name,
+              " sd across complete seeds"
+            )
+          ]] <- if (length(finite_values) >= 2L) {
+            stats::sd(finite_values)
+          } else {
+            NA_real_
+          }
+        }
+
+        row
       }
-      row
-    })
-    summary_df <- do.call(rbind, summary_rows)
+    )
+
+    summary_df <- do.call(
+      rbind,
+      summary_rows
+    )
     summary_csv_name <- file.path(
       summaries_dir,
       sprintf(

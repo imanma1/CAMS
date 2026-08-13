@@ -65,6 +65,54 @@ alpha_qt <- function(mdl, newdata, data_fit, data_calib, xnames, alpha, len_x, m
 
   feasible_idx <- which(alpha_v <= alpha)
 
+  if (isTRUE(getOption("debug_dft_fixed", FALSE))) {
+
+    cat("\n========== DFT-ADAPTIVE-T CALIBRATION DEBUG ==========\n")
+    cat("Number of v candidates:", length(v_list), "\n")
+
+    cat(
+      "v range:",
+      min(v_list, na.rm = TRUE),
+      "to",
+      max(v_list, na.rm = TRUE),
+      "\n"
+    )
+
+    cat(
+      "alpha_v range:",
+      min(alpha_v, na.rm = TRUE),
+      "to",
+      max(alpha_v, na.rm = TRUE),
+      "\n"
+    )
+
+    cat(
+      "minimum estimated miscoverage:",
+      min(alpha_v, na.rm = TRUE),
+      "\n"
+    )
+
+    cat(
+      "number feasible at alpha =",
+      alpha,
+      ":",
+      length(feasible_idx),
+      "\n"
+    )
+
+    if (length(feasible_idx) > 0) {
+      cat(
+        "selected v:",
+        min(v_list[feasible_idx]),
+        "\n"
+      )
+    } else {
+      cat("NO FEASIBLE v -> lower bound will be 0\n")
+    }
+
+    cat("======================================================\n\n")
+  }
+
   if (length(feasible_idx) == 0) {
     v_hat_l <- NULL
   } else {
@@ -163,6 +211,54 @@ alpha_qct <- function(mdl, qc_mdl, newdata, data_fit, data_calib, xnames, alpha,
   alpha_v[bad_alpha_v] <- 1
 
   feasible_idx <- which(alpha_v <= alpha)
+
+  if (isTRUE(getOption("debug_dft_fixed", FALSE))) {
+
+    cat("\n========== DFT-ADAPTIVE-CT CALIBRATION DEBUG ==========\n")
+    cat("Number of v candidates:", length(v_list), "\n")
+
+    cat(
+      "v range:",
+      min(v_list, na.rm = TRUE),
+      "to",
+      max(v_list, na.rm = TRUE),
+      "\n"
+    )
+
+    cat(
+      "alpha_v range:",
+      min(alpha_v, na.rm = TRUE),
+      "to",
+      max(alpha_v, na.rm = TRUE),
+      "\n"
+    )
+
+    cat(
+      "minimum estimated miscoverage:",
+      min(alpha_v, na.rm = TRUE),
+      "\n"
+    )
+
+    cat(
+      "number feasible at alpha =",
+      alpha,
+      ":",
+      length(feasible_idx),
+      "\n"
+    )
+
+    if (length(feasible_idx) > 0) {
+      cat(
+        "selected v:",
+        min(v_list[feasible_idx]),
+        "\n"
+      )
+    } else {
+      cat("NO FEASIBLE v -> lower bound will be 0\n")
+    }
+
+    cat("======================================================\n\n")
+  }
 
   if (length(feasible_idx) == 0) {
     v_hat_l <- NULL

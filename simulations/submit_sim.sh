@@ -8,23 +8,62 @@
 #SBATCH --array=1-100:10
 #SBATCH --output=sim_log_%A_%a.txt
 
+
 module load StdEnv/2023
 module load r/4.5.0
 
+
 cd ~/scratch/CAMS/simulations
 
-SETTING_LIST="cov_cens_dr_tail_hetero"
 
-SC_METHODS="power_oracle"
+########################################
+## Per-setting configuration
+########################################
+
+# Format:
+#
+# setting:n_train:n_calib:n_test:bernoulli_prob
+#
+# Separate multiple settings with ";"
+#
+# Here:
+#   - first two settings use n_train = 2000
+#   - rare setting uses n_train = 200
+#
+# Adjust n_calib / n_test / bernoulli_prob
+# independently for any setting as needed.
+
+SETTING_CONFIGS="\
+intersection_scale_shift_hd:2000:8000:20000:0.10;\
+intersection_early_event_mixture_hd:2000:8000:20000:0.10;\
+rare_intersection_scale_shift_ld:200:800:20000:0.10"
+
+
+########################################
+## Other simulation configuration
+########################################
+
+SC_METHODS="aft_lognormal"
+
 ONLY_CAMS=0
-AUGMENTATION_METHODS="oracle_event"
+
+AUGMENTATION_METHODS="same"
+
 HOMOSCEDASTIC_EVENT=0
+
 SC_NTREE=1000
+
 NUM_RUNS=10
+
 USE_INTERSECTIONAL_R=1
 
+
+########################################
+## Run
+########################################
+
 Rscript run_sim.R \
-  "$SETTING_LIST" \
+  "$SETTING_CONFIGS" \
   "$SLURM_ARRAY_TASK_ID" \
   "$SC_METHODS" \
   "$ONLY_CAMS" \
